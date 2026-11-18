@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bookbot"
+version = "1.0.0"
+description = "책 HTML 과 책 Q&A 챗봇 엔진 (Claude Code 구독·Codex CLI)"
+requires-python = ">=3.11"
+dependencies = ["fastapi", "uvicorn", "claude-agent-sdk", "python-dotenv", "pydantic", "anyio"]
+
+[tool.setuptools]
+packages = ["bookbot"]
+
+[tool.setuptools.package-data]
+bookbot = ["assets/*"]

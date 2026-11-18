@@ -1,0 +1,1521 @@
+<!-- 책 Q&A 챗봇 (bookbot 엔진): bookbot/build.py 가 </body> 앞에 넣는다. BOOK_ID 는 빌드 때 book.toml 의 id 로 채운다 -->
+<style>
+:root{--danger:#a32020; --danger-bg:#fbeaea}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){--danger:#f08080; --danger-bg:#3a1f1f} }
+:root[data-theme="dark"]{--danger:#f08080; --danger-bg:#3a1f1f}
+/* 이 책은 본문이 #main 안에서 스크롤되므로 힌트·💬 표시는 #content 기준 절대 위치로 둔다 */
+#content{position:relative}
+/* ---- 책 수정: 답변 아래 수정 카드(원고 변경 diff·고친 곳 보기·되돌리기)와 고친 블록 깜빡임 ---- */
+:root{--ins:#1d6b2a; --ins-bg:#e3f3e1}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){--ins:#8fd48a; --ins-bg:#1e3320} }
+:root[data-theme="dark"]{--ins:#8fd48a; --ins-bg:#1e3320}
+/* [✏️ 책 수정] 모드: 켜면 버튼·입력창이 초록으로 바뀌고, 이 모드에서 보낸 요청만 서버가 수정 도구를 준다 */
+#chatBox .ch-head button.ch-editmode{color:var(--muted)}
+#chatBox .ch-head button.ch-editmode[aria-pressed="true"]{background:var(--ins-bg); color:var(--ins); border-color:var(--why-line); font-weight:700}
+#chatBox.editing .ch-input textarea{border-color:var(--why-line); background:var(--ins-bg)}
+#chatBox.editing .ch-input textarea:focus{outline-color:var(--why-line)}
+#chatBox .ch-msg.user .ch-tag{display:inline-block; font-size:8pt; font-weight:700; color:var(--ins); background:var(--ins-bg); border:1px solid var(--why-line); border-radius:3px; padding:0 5px; margin-right:5px; vertical-align:1px}
+/* ---- 이미지 첨부: 붙여 넣기(Ctrl+V)·끌어 놓기·📎 → 입력창 위 미리 보기 줄, 보낸 질문 말풍선에 썸네일(클릭하면 크게) ---- */
+#chatBox .ch-tray{display:none; flex:0 0 auto; gap:6px; flex-wrap:wrap; align-items:center; padding:8px 12px 0; background:var(--panel); border-top:1px solid var(--line)}
+#chatBox .ch-tray.has,#chatBox .ch-tray.msg{display:flex}
+#chatBox .ch-tray.has + .ch-input,#chatBox .ch-tray.msg + .ch-input{border-top:0}
+#chatBox .ch-thumb{position:relative; width:60px; height:60px; border:1px solid var(--line); border-radius:5px; overflow:hidden; background:var(--bg)}
+#chatBox .ch-thumb img{width:100%; height:100%; object-fit:cover; display:block}
+#chatBox .ch-thumb button{position:absolute; top:2px; right:2px; width:18px; height:18px; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,.62); color:#fff; font-size:12px; line-height:18px; cursor:pointer}
+#chatBox .ch-thumb .sz{position:absolute; left:0; right:0; bottom:0; font-size:7.5pt; line-height:1.4; text-align:center; background:rgba(0,0,0,.45); color:#fff}
+#chatBox .ch-tray .tmsg{font-size:8.6pt; color:var(--danger)}
+#chatBox .ch-attach{flex:0 0 auto; align-self:stretch; width:36px; padding:0; cursor:pointer; border:1px solid var(--line); border-radius:5px; background:var(--bg); font-size:16px}
+#chatBox .ch-attach:hover{background:var(--accent-soft)}
+#chatBox.dropping .ch-body{outline:3px dashed var(--accent); outline-offset:-6px}
+.ch-msg.user .ch-imgs{display:flex; gap:6px; flex-wrap:wrap; margin:2px 0 6px}
+.ch-msg.user .ch-imgs img{max-height:110px; max-width:100%; border-radius:4px; border:1px solid var(--line); cursor:zoom-in; background:var(--bg)}
+.ch-msg.user .ch-imgs img.big{max-height:none; cursor:zoom-out}
+#chatBox .ch-edit{margin:8px 0 2px; border:1px solid var(--line); border-left:3px solid var(--why-line); border-radius:6px; background:var(--panel); padding:6px 9px; font-size:9pt}
+#chatBox .ch-edit .eh{display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+#chatBox .ch-edit .eh .t{flex:1; font-weight:700; color:var(--ink)}
+#chatBox .ch-edit .eh button{font-family:inherit; font-size:8.5pt; cursor:pointer; border:1px solid var(--line); background:var(--bg); color:var(--accent); border-radius:4px; padding:1px 8px}
+#chatBox .ch-edit .eh button:hover{background:var(--accent-soft)}
+#chatBox .ch-edit .eh button:disabled{cursor:default; opacity:.7}
+#chatBox .ch-edit details summary{cursor:pointer; color:var(--muted); font-size:8.5pt; margin-top:4px}
+#chatBox .ch-edit pre.diff{margin:5px 0 0; white-space:pre-wrap; word-break:break-all; font-size:8.3pt; line-height:1.5; max-height:240px; overflow:auto; background:var(--bg); border:1px solid var(--line); padding:6px 8px; border-radius:4px}
+#chatBox .ch-edit pre.diff .ctx{color:var(--muted)}
+#chatBox .ch-edit pre.diff del{background:var(--danger-bg); color:var(--danger)}
+#chatBox .ch-edit pre.diff ins{background:var(--ins-bg); color:var(--ins); text-decoration:none}
+#chatBox .ch-edit.reverted{border-left-color:var(--muted)}
+#chatBox .ch-edit.reverted .eh .t{color:var(--muted); text-decoration:line-through}
+.ch-edited{outline:3px solid var(--why-line) !important; outline-offset:4px; border-radius:3px; animation:chEdited 2.6s ease-out}
+@keyframes chEdited{0%,40%{background:var(--why)}100%{background:transparent}}
+/* ---- 책에 묻기 : 블록 클릭 → 챗 팝업 ---- */
+.ask-hover{cursor:pointer; outline:2px solid var(--line); outline-offset:4px; border-radius:3px}
+.ask-active{outline:2px solid var(--accent) !important; outline-offset:4px; border-radius:3px}
+/* 대화한 블록 표시: 본문 오른쪽 바깥의 💬 버튼 (본문 텍스트에 섞이지 않게 별도 레이어) */
+.chat-mark{
+  position:absolute; z-index:39; display:none; padding:2px 7px; font-family:inherit; font-size:10.5pt; line-height:1.3; cursor:pointer;
+  border:1px solid var(--line); border-radius:10px; background:var(--accent-soft); color:var(--accent); white-space:nowrap;
+}
+.chat-mark:hover{background:var(--accent); color:#fff; border-color:var(--accent)}
+@media print{ .chat-mark{display:none !important} }
+#askHint{
+  position:absolute; z-index:40; display:none; pointer-events:none;
+  font-size:8.4pt; line-height:1; color:#fff; background:var(--accent); border-radius:10px; padding:4px 9px;
+  box-shadow:0 2px 6px rgba(0,0,0,.2); white-space:nowrap;
+}
+#chatBox{
+  position:fixed; z-index:91; display:none; right:8px; bottom:24px;
+  width:min(657px,calc(100vw - 24px));   /* 821px에서 20% 줄임 */ height:min(74vh,760px);
+  background:var(--bg); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px;
+  box-shadow:0 14px 44px rgba(0,0,0,.28); flex-direction:column; overflow:hidden; font-size:10pt;
+}
+#chatBox.open{display:flex}
+#chatBox .ch-head{
+  flex:0 0 auto; padding:10px 12px 9px 14px; display:flex; align-items:center; gap:8px;
+  background:var(--panel); border-bottom:1px solid var(--line); cursor:grab; user-select:none; touch-action:none;
+}
+#chatBox.dragging .ch-head{cursor:grabbing}
+#chatBox .ch-title{flex:1; font-weight:700; color:var(--accent); font-size:10.8pt}
+#chatBox .ch-head button{
+  font-family:inherit; font-size:8.8pt; cursor:pointer; border:1px solid var(--line);
+  background:var(--bg); color:var(--accent); border-radius:4px; padding:2px 9px;
+}
+#chatBox .ch-head button.x{   /* 클릭 영역 34×34 — 음수 여백으로 제목줄 높이는 그대로 */
+  border:0; background:none; color:var(--muted); font-size:20px; line-height:1; padding:0;
+  width:34px; height:34px; margin:-7px -8px -7px 0; display:flex; align-items:center; justify-content:center; border-radius:6px;
+}
+#chatBox .ch-head select.ch-model, #chatBox .ch-head select.ch-effort{   /* 모델·추론 에포트 선택 */
+  font-family:inherit; font-size:8.8pt; max-width:150px; cursor:pointer; border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); border-radius:4px; padding:2px 4px;
+}
+#chatBox .ch-head select.ch-effort{max-width:80px}
+#chatBox .ch-head select.ch-model:disabled, #chatBox .ch-head select.ch-effort:disabled{opacity:.6; cursor:not-allowed}
+#chatBox .ch-head button:hover{background:var(--accent-soft)}
+#chatBox .ch-head button.x:hover{background:var(--accent-soft); color:var(--ink)}
+#chatBox .ch-anchor{
+  flex:0 0 auto; padding:8px 14px; background:var(--note); border-bottom:1px solid var(--line); font-size:9pt;
+}
+#chatBox .ch-anchor b{color:var(--accent)}
+#chatBox .ch-anchor .q{
+  color:var(--muted); margin-top:3px; border-left:3px solid var(--note-line); padding-left:8px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+#chatBox .ch-log{flex:1 1 auto; overflow-y:auto; padding:12px 14px}
+/* 대화 이력 목록(왼쪽) + 대화 영역(오른쪽) */
+#chatBox .ch-main{flex:1 1 auto; display:flex; min-height:0}
+#chatBox .ch-body{flex:1 1 auto; display:flex; flex-direction:column; min-width:0}
+#chatBox .ch-hist{flex:0 0 150px; min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--panel); min-height:0}
+#chatBox .ch-hist-title{flex:0 0 auto; padding:8px 10px 6px; font-size:8.6pt; font-weight:700; color:var(--muted)}
+#chatBox .ch-hist-list{flex:1 1 auto; overflow-y:auto; padding:0 6px 8px}
+#chatBox .ch-hist-empty{padding:4px 6px; font-size:8.4pt; color:var(--muted); line-height:1.6}
+#chatBox .ch-hist-item{
+  display:block; width:100%; text-align:left; margin:0 0 5px; padding:6px 8px; cursor:pointer; font-family:inherit;
+  border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink);
+}
+#chatBox .ch-hist-item:hover{background:var(--accent-soft)}
+#chatBox .ch-hist-item.cur{border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent)}
+#chatBox .ch-hist-item .q{font-size:8.8pt; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+#chatBox .ch-hist-item .m{margin-top:3px; font-size:7.8pt; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+/* 커스텀 확인·알림 창 (BookDialog) */
+#bookDialog{position:fixed; inset:0; z-index:100; display:none; align-items:center; justify-content:center; background:rgba(20,30,45,.28); padding:16px}
+#bookDialog.open{display:flex}
+#bookDialog .bd-box{
+  width:min(380px,100%); background:var(--bg); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px;
+  box-shadow:0 14px 44px rgba(0,0,0,.28); padding:16px 18px 14px; font-size:9.8pt; animation:bdIn .12s ease-out;
+}
+@keyframes bdIn{from{transform:translateY(6px); opacity:0} to{transform:none; opacity:1}}
+#bookDialog .bd-title{font-weight:700; color:var(--accent); font-size:10.6pt; margin-bottom:6px}
+#bookDialog .bd-msg{white-space:pre-wrap; line-height:1.6; color:var(--ink); word-break:break-word}
+#bookDialog .bd-btns{display:flex; justify-content:flex-end; gap:8px; margin-top:14px}
+#bookDialog .bd-btns button{font-family:inherit; font-size:9.2pt; padding:5px 14px; border-radius:5px; cursor:pointer; border:1px solid var(--line); background:var(--bg); color:var(--ink)}
+#bookDialog .bd-btns button:hover{background:var(--accent-soft)}
+#bookDialog .bd-btns button.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+#bookDialog .bd-btns button.primary:hover{background:var(--accent); filter:brightness(.9)}
+#bookDialog .bd-btns button.danger{background:var(--danger); border-color:var(--danger); color:#fff}
+#bookDialog .bd-btns button.danger:hover{filter:brightness(.92)}
+#bookDialog .bd-btns button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+@media print{ #bookDialog{display:none !important} }
+/* 대화 이력 카드 우클릭 메뉴 */
+#histMenu{
+  position:fixed; z-index:95; display:none; min-width:120px; padding:4px; background:var(--bg);
+  border:1px solid var(--line); border-radius:6px; box-shadow:0 6px 20px rgba(0,0,0,.18);
+}
+#histMenu button{
+  display:block; width:100%; text-align:left; padding:6px 10px; font-family:inherit; font-size:9pt; cursor:pointer;
+  border:0; border-radius:4px; background:none; color:var(--danger);
+}
+#histMenu button:hover{background:var(--danger-bg)}
+#histMenu button[disabled]{color:var(--muted); cursor:default; background:none}
+#chatBox .ch-hist-item .live{color:#fff; background:var(--accent); border-radius:3px; padding:0 4px; margin-right:4px; font-size:7.4pt}
+#chatBox .ch-msg .where{font-size:8.2pt; color:var(--muted); margin-bottom:3px}
+@media (max-width:640px){
+  #chatBox .ch-main{flex-direction:column}
+  #chatBox .ch-hist{flex:0 0 auto; max-height:96px; border-right:0; border-bottom:1px solid var(--line)}
+}
+#chatBox .ch-empty{color:var(--muted); font-size:9.3pt; line-height:1.7}
+.ch-msg{margin:0 0 12px}
+.ch-msg.user{
+  margin-left:18%; padding:7px 11px; background:var(--accent-soft); border-radius:8px 8px 2px 8px; white-space:pre-wrap;
+}
+.ch-msg.bot{position:relative; padding:9px 34px 9px 12px; background:var(--bg); border:1px solid var(--line); border-radius:8px 8px 8px 2px}
+/* 답변 복사 버튼 (말풍선 오른쪽 위) */
+.ch-copy{
+  position:absolute; top:5px; right:5px; width:24px; height:24px; padding:0; display:flex; align-items:center; justify-content:center;
+  border:1px solid transparent; border-radius:4px; background:transparent; color:var(--muted); cursor:pointer; opacity:.55;
+}
+.ch-msg.bot:hover .ch-copy,.ch-copy:focus-visible{opacity:1; border-color:var(--line); background:var(--bg)}
+.ch-copy:hover{color:var(--accent); background:var(--accent-soft) !important}
+.ch-copy.done{color:var(--why-line); opacity:1}
+.ch-copy svg{width:14px; height:14px}
+.ch-msg.bot p{margin:0 0 8px; text-align:left}
+.ch-msg.bot p:last-child{margin-bottom:0}
+.ch-msg.bot ul,.ch-msg.bot ol{margin:0 0 8px; padding-left:20px}
+.ch-msg.bot pre{margin:6px 0 8px}
+.ch-msg.bot a{color:var(--accent); font-weight:700}
+.ch-msg.err{padding:8px 11px; background:var(--danger-bg); border-left:4px solid var(--danger); color:var(--danger); font-size:9.3pt}
+.ch-msg.wait{color:var(--muted); font-size:9.3pt}
+.ch-msg.wait::after{content:"…"; animation:chDots 1.2s steps(4) infinite; display:inline-block; width:1.2em; overflow:hidden; vertical-align:bottom}
+@keyframes chDots{from{width:0} to{width:1.2em}}
+.ch-msg details{margin-top:8px; font-size:8.6pt; color:var(--muted)}
+.ch-msg details summary{cursor:pointer; color:var(--warn-line)}
+.ch-msg details li{margin:1px 0}
+.ch-msg details .compact{color:var(--why-line)}
+.ch-note{
+  margin:0 0 12px; padding:6px 10px; font-size:8.8pt; background:var(--why); border-left:3px solid var(--why-line); color:var(--why-line);
+}
+.ch-note details summary{cursor:pointer}
+.ch-note .sum{color:var(--ink); margin-top:5px}
+.ch-note .sum p{margin:0 0 6px; text-align:left}
+#chatBox .ch-input{flex:0 0 auto; display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line); background:var(--panel)}
+#chatBox textarea{
+  flex:1; resize:none; height:58px; padding:6px 9px; font-family:inherit; font-size:9.8pt; line-height:1.5;
+  border:1px solid var(--line); border-radius:5px;
+}
+#chatBox textarea:focus{outline:2px solid var(--accent); outline-offset:-1px}
+#chatBox .send{
+  flex:0 0 auto; align-self:stretch; padding:0 14px; cursor:pointer; font-family:inherit; font-weight:700;
+  border:0; border-radius:5px; background:var(--accent); color:#fff;
+}
+#chatBox .send:hover{background:var(--accent); filter:brightness(.9)}
+#chatBox .send[disabled]{background:var(--muted); cursor:default}
+/* 챗 답변 안의 마크다운 — 책 본문 제목 스타일을 덮어 작게 */
+.ch-msg.bot h1,.ch-msg.bot h2,.ch-msg.bot h3,.ch-msg.bot h4{
+  font-size:10.4pt; margin:12px 0 5px; padding:0; border:0; color:var(--accent); line-height:1.4;
+}
+.ch-msg.bot h1:first-child,.ch-msg.bot h2:first-child,.ch-msg.bot h3:first-child{margin-top:0}
+.ch-msg.bot table{font-size:8.8pt; margin:8px 0; width:100%}
+.ch-msg.bot th,.ch-msg.bot td{padding:4px 6px}
+.ch-msg.bot blockquote{margin:6px 0; padding:4px 10px; border-left:3px solid var(--note-line); color:var(--ink); background:var(--note)}
+.ch-msg.bot li > p{margin:0}
+.ch-mmd{margin:8px 0; padding:10px 6px; background:var(--panel); border:1px solid var(--line); border-radius:4px; overflow-x:auto; text-align:center}
+.ch-mmd svg{max-width:100%; height:auto}
+.ch-mmd-err{font-size:8.4pt; color:var(--danger); text-align:left; margin-bottom:4px}
+/* 진행 줄: 답이 길어져 아래로 스크롤해도 끝날 때까지(done·stopped·error) 창 위쪽에 붙어 돌아간다 */
+.ch-status{
+  display:flex; align-items:center; gap:7px; font-size:8.8pt; color:var(--muted); margin:-4px 0 4px; padding:4px 0 6px;
+  position:sticky; top:-12px; z-index:2; background:var(--bg); border-bottom:1px solid var(--line);
+}
+.ch-status .dot{
+  flex:0 0 auto; width:12px; height:12px; box-sizing:border-box; border-radius:50%;
+  border:2px solid var(--line); border-top-color:var(--accent); animation:chSpin .8s linear infinite;
+}
+@keyframes chSpin{to{transform:rotate(360deg)}}
+.ch-status .time{margin-left:auto; font-variant-numeric:tabular-nums}
+.ch-status .hint{margin-left:auto; font-size:8pt; padding:0 5px; border:1px solid var(--line); border-radius:3px; opacity:.8}
+.ch-status .hint + .time{margin-left:0}
+.ch-stopped{margin-top:6px; font-size:8.4pt; color:var(--muted)}
+.ch-think{margin:0 0 6px; font-size:8.4pt; color:var(--muted)}
+.ch-think summary{cursor:pointer; color:var(--why-line)}
+/* 도구 호출 전에 쓴 글(초안): 지우지 않고 남긴다. 답변이 끝나면 접는다 */
+.ch-draft{margin:0 0 8px; font-size:9pt; color:var(--muted)}
+.ch-draft summary{cursor:pointer; color:var(--why-line)}
+.ch-draft .draft-body{margin-top:4px; padding:6px 10px; border-left:3px solid var(--line); background:var(--panel); border-radius:2px; opacity:.85}
+.ch-draft .draft-body p{margin:0 0 6px; text-align:left}
+.ch-think .think-body{
+  margin-top:4px; padding:6px 8px; max-height:150px; overflow-y:auto; white-space:pre-wrap; line-height:1.55;
+  background:var(--why); border-left:3px solid var(--why-line); border-radius:2px;
+}
+.ch-trace{margin:0 0 6px; padding-left:18px; font-size:8.4pt; color:var(--muted)}
+.ch-trace li{margin:1px 0}
+.ch-trace .compact{color:var(--why-line)}
+.ch-trace .web{color:var(--why-line)}
+.ch-trace .web a{color:inherit; font-weight:400; text-decoration:underline}
+.ch-answer:empty{display:none}
+@media print{ #askHint,#chatBox{display:none !important} .ask-hover,.ask-active{outline:none !important} }
+
+/* ---- 토큰 사용량·비용: 챗봇 제목줄 버튼 + 창 안 드롭다운 ---- */
+#chatBox .ch-head button.ch-cost{font-variant-numeric:tabular-nums; font-weight:700; color:var(--warn-line); border-color:var(--line); background:var(--panel)}
+#chatBox .ch-head button.ch-cost[aria-expanded="true"]{background:var(--accent-soft)}
+#usagePanel{
+  --surface-1:var(--bg); --text-primary:var(--ink); --text-secondary:var(--muted); --text-muted:var(--muted);
+  --grid:var(--line); --series-1:#2a78d6; --series-2:#eb6834;   /* 1: 입력, 2: 출력 — 검증된 categorical 1·2번 */
+  position:absolute; top:52px; right:10px; z-index:5; width:300px; max-height:calc(100% - 64px); overflow:auto; display:none;
+  background:var(--surface-1); border:1px solid var(--line); border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.18); font-size:9pt; color:var(--text-primary); cursor:auto;
+}
+#usagePanel.open{display:block}
+#usagePanel .up-head{
+  display:flex; align-items:center; gap:6px; padding:7px 10px; background:var(--panel); border-bottom:1px solid var(--line);
+}
+#usagePanel .up-title{flex:1; font-weight:700; color:var(--accent); font-size:9.4pt}
+#usagePanel .up-hero .s{white-space:nowrap}
+#usagePanel .up-more{margin-top:8px}
+#usagePanel .up-head button{
+  font-family:inherit; font-size:8.4pt; cursor:pointer; border:1px solid var(--line); background:var(--bg);
+  color:var(--accent); border-radius:4px; padding:1px 7px; line-height:1.5;
+}
+#usagePanel .up-head button:hover{background:var(--accent-soft)}
+#usagePanel .up-body{padding:10px 12px 10px}
+#usagePanel .up-hero{display:flex; align-items:baseline; gap:8px}
+#usagePanel .up-hero .v{font-size:19pt; font-weight:700; line-height:1.15; font-variant-numeric:tabular-nums}
+#usagePanel .up-hero .s{color:var(--text-secondary); font-size:8.6pt}
+#usagePanel .up-sub{color:var(--text-secondary); font-size:8.4pt; margin:2px 0 8px; font-variant-numeric:tabular-nums}
+#usagePanel .up-tiles{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px}
+#usagePanel .up-tile{border:1px solid var(--line); border-radius:6px; padding:5px 7px}
+#usagePanel .up-tile .k{display:flex; align-items:center; gap:5px; color:var(--text-secondary); font-size:8.2pt}
+#usagePanel .up-tile .sw{width:9px; height:9px; border-radius:2px; flex:0 0 auto}
+#usagePanel .up-tile .t{font-weight:700; font-variant-numeric:tabular-nums; font-size:9.6pt}
+#usagePanel .up-tile .c{color:var(--text-secondary); font-variant-numeric:tabular-nums; font-size:8.4pt}
+#usagePanel .up-chart-title{color:var(--text-secondary); font-size:8.2pt; margin:2px 0 2px}
+#usagePanel svg{display:block; width:100%; height:auto; overflow:visible}
+#usagePanel svg text{font-family:inherit; font-size:8px; fill:var(--text-muted); font-variant-numeric:tabular-nums}
+#usagePanel .up-empty{color:var(--text-muted); font-size:8.4pt; padding:14px 0; text-align:center}
+#usagePanel details{margin-top:6px; font-size:8.2pt}
+#usagePanel details summary{cursor:pointer; color:var(--warn-line)}
+#usagePanel .up-table-wrap{max-height:150px; overflow:auto; margin-top:4px}
+#usagePanel table{font-size:7.8pt; margin:0}
+#usagePanel th,#usagePanel td{padding:2px 4px; text-align:right; font-variant-numeric:tabular-nums}
+#usagePanel th:first-child,#usagePanel td:first-child{text-align:left; word-break:break-all}
+#usagePanel td .c{color:var(--text-secondary)}
+#usageTip{
+  position:fixed; z-index:95; display:none; pointer-events:none; max-width:250px;
+  background:var(--bg); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.16);
+  padding:7px 9px; font-size:8.4pt; line-height:1.55; color:var(--ink); font-variant-numeric:tabular-nums;
+}
+#usageTip .q{color:var(--muted); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#usageTip .row{display:flex; align-items:center; gap:5px}
+#usageTip .sw{width:8px; height:8px; border-radius:2px}
+#usageTip .row span:last-child{margin-left:auto; padding-left:10px}
+@media print{ #usagePanel,#usageTip{display:none !important} }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script>window.BOOK_ID = '{{book_id}}';</script>
+<script>
+// 커스텀 확인·알림 창 — 브라우저 기본 confirm/alert 대신. window.BookDialog.confirm({...}) / .alert({...}) → Promise
+(function(){
+  var ov = document.createElement('div');
+  ov.id = 'bookDialog';
+  ov.innerHTML = '<div class="bd-box" role="alertdialog" aria-modal="true" aria-labelledby="bdTitle" aria-describedby="bdMsg">' +
+    '<div class="bd-title" id="bdTitle"></div><div class="bd-msg" id="bdMsg"></div><div class="bd-btns"></div></div>';
+  document.body.appendChild(ov);
+  var elTitle = ov.querySelector('.bd-title'), elMsg = ov.querySelector('.bd-msg'), elBtns = ov.querySelector('.bd-btns');
+  var done = null, lastFocus = null;
+
+  function close(result){
+    if (!done) return;
+    var d = done; done = null;
+    ov.classList.remove('open');
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    d(result);
+  }
+  function show(o, buttons){
+    if (done) close(false);                     // 이미 열려 있으면 앞의 것은 취소로 끝낸다
+    lastFocus = document.activeElement;
+    elTitle.textContent = o.title || '';
+    elTitle.hidden = !o.title;
+    elMsg.textContent = o.message || '';
+    elBtns.innerHTML = '';
+    var focusBtn = null;
+    buttons.forEach(function(b){
+      var el = document.createElement('button');
+      el.type = 'button'; el.textContent = b.label; el.className = b.cls || '';
+      el.onclick = function(){ close(b.value); };
+      elBtns.appendChild(el);
+      if (b.focus) focusBtn = el;
+    });
+    ov.classList.add('open');
+    (focusBtn || elBtns.lastChild).focus();
+    return new Promise(function(res){ done = res; });
+  }
+  ov.addEventListener('pointerdown', function(e){ if (e.target === ov) close(false); });   // 바깥 클릭 = 취소
+  // Esc 는 취소. 챗 팝업의 Esc(닫기)까지 가지 않게 여기서 멈춘다
+  addEventListener('keydown', function(e){
+    if (!done) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close(false); }
+    else if (e.key === 'Tab') {                  // 포커스를 창 안에 가둔다
+      var bs = elBtns.querySelectorAll('button'), i = Array.prototype.indexOf.call(bs, document.activeElement);
+      e.preventDefault(); bs[(i + (e.shiftKey ? bs.length - 1 : 1)) % bs.length].focus();
+    }
+  }, true);
+
+  window.BookDialog = {
+    // danger: 되돌릴 수 없는 동작 — 확인 버튼을 경고색으로, 기본 포커스는 취소에
+    confirm: function(o){
+      return show(o, [
+        { label: o.cancel || '취소', value: false, cls: 'cancel', focus: !!o.danger },
+        { label: o.ok || '확인', value: true, cls: o.danger ? 'danger' : 'primary', focus: !o.danger }
+      ]);
+    },
+    alert: function(o){ return show(o, [{ label: o.ok || '확인', value: true, cls: 'primary', focus: true }]); }
+  };
+})();
+</script>
+<script>
+// 책에 묻기 — 본문 블록 클릭 → 챗 팝업. 서버: python -m bookbot serve (POST /api/chat/stream)
+(function(){
+  var content = document.getElementById('content');
+  if (!content) return;
+  var BLOCK_MAX = 1500, CONTEXT_MAX = 8000, NEAR = 3;
+
+  // ---------- 블록 판별과 맥락 수집 ----------
+  // 이 책은 장(section.chapter) 아래에 블록이 평평하게 놓이고, 절은 <h2 id> 부터 다음 h2 앞까지다
+  function isBlock(el){
+    if (!el || el.nodeType !== 1) return false;
+    var p = el.parentElement;
+    if (!p || !(p.tagName === 'SECTION' && p.classList.contains('chapter'))) return false;
+    if (el.classList.contains('pager') || el.tagName === 'H1' || el.tagName === 'H2') return false;
+    return true;
+  }
+  function secOf(el){          // 블록이 속한 절의 h2 (없으면 null = 장 머리말)
+    for (var n = el.previousElementSibling; n; n = n.previousElementSibling) if (n.tagName === 'H2' && n.id) return n;
+    return null;
+  }
+  function norm2(b){           // 그림 캡션(.cap)은 앞의 다이어그램과 한 블록으로
+    if (b && b.classList.contains('cap') && b.previousElementSibling && b.previousElementSibling.classList.contains('mermaid')) return b.previousElementSibling;
+    return b;
+  }
+  function blockOf(node){
+    for (var el = node; el && el !== content; el = el.parentElement) if (isBlock(el)) return el;
+    return null;
+  }
+  // 절 제목(<h2 id>)을 클릭하면 그 절 전체에 대해 묻는다. 본문은 서버가 색인의 절 파일에서 직접 넣는다
+  function isHead(el){
+    var p = el && el.parentElement;
+    return !!(el && el.tagName === 'H2' && el.id && p && p.tagName === 'SECTION' && p.classList.contains('chapter'));
+  }
+  function headOf(node){
+    for (var el = node; el && el !== content; el = el.parentElement) if (isHead(el)) return el;
+    return null;
+  }
+  function pick(node){ return headOf(node) || norm2(blockOf(node)); }
+  function headTitle(h2){ return h2.textContent.replace(/\s+/g, ' ').trim(); }
+  function secTarget(h2){ return '[절 전체] ' + headTitle(h2); }      // 이력의 위치 표시(💬)와 블록별 대화 목록을 맞추는 열쇠
+  function blockText(el){
+    var t;
+    if (el.classList.contains('mermaid')) {
+      var cap = el.nextElementSibling && el.nextElementSibling.classList.contains('cap') ? el.nextElementSibling.textContent.trim() : '';
+      t = '[다이어그램' + (cap ? ': ' + cap : '') + ']\n' + (el.dataset.src || el.textContent).trim();
+    }
+    else if (el.tagName === 'PRE') t = '```\n' + el.innerText.replace(/\n+$/, '') + '\n```';
+    else if (el.classList.contains('cap')) return '';          // 앞의 다이어그램과 한 쌍으로 처리
+    else t = el.innerText;
+    t = (t || '').trim();
+    return t.length > BLOCK_MAX ? t.slice(0, BLOCK_MAX) + ' …' : t;
+  }
+  function siblings(el, dir){
+    var out = [], n = el;
+    while (out.length < NEAR && (n = dir < 0 ? n.previousElementSibling : n.nextElementSibling)) {
+      if (n.tagName === 'H2') break;                  // 절 경계를 넘지 않는다
+      if (!isBlock(n)) continue;
+      var t = blockText(n);
+      if (t) out.push(t);
+    }
+    return dir < 0 ? out.reverse() : out;
+  }
+  function collect(block){
+    if (isHead(block)) {
+      var h = block.closest('section.chapter').querySelector('h1');
+      return { scope: 'section', chapter_title: h ? h.textContent.trim() : '', section_id: block.id,
+               section_title: headTitle(block), before: '', target: secTarget(block), after: '' };
+    }
+    block = norm2(block);
+    var sec = secOf(block), art = block.closest('section.chapter');
+    var target = blockText(block), before = siblings(block, -1), after = siblings(block, 1);
+    // 전체 한도를 넘으면 클릭 블록에서 먼 것부터 버린다
+    var total = function(){ return target.length + before.join('').length + after.join('').length; };
+    while (total() > CONTEXT_MAX && (before.length || after.length)) {
+      if (before.length >= after.length) before.shift(); else after.pop();
+    }
+    var h1 = art.querySelector('h1'), h2 = sec;
+    return {
+      chapter_title: h1 ? h1.textContent.trim() : '',
+      section_id: sec ? sec.id : art.id,
+      section_title: h2 ? h2.textContent.replace(/\s+/g, ' ').trim() : (h1 ? h1.textContent.trim() : ''),
+      before: before.join('\n\n'), target: target, after: after.join('\n\n')
+    };
+  }
+
+  // ---------- 블록 클릭으로 묻기 ----------
+  // 호버: 블록 테두리 + 블록 안쪽 오른쪽 위에 안내 배지(pointer-events:none 이라 마우스 이동을 방해하지 않음)
+  var hint = document.createElement('div');
+  hint.id = 'askHint'; hint.textContent = '💬 클릭해서 묻기';
+  content.appendChild(hint);
+  var hovered = null, active = null, clickTimer = null;
+  function unhover(){
+    if (hovered) hovered.classList.remove('ask-hover');
+    hovered = null; hint.style.display = 'none';
+  }
+  function placeHint(b){
+    var r = b.getBoundingClientRect(), c = content.getBoundingClientRect();
+    hint.style.display = 'block';
+    // 블록 위쪽 테두리 바깥 오른쪽에 걸쳐 본문 글자를 가리지 않게. 블록 위가 화면 밖이면 화면 위쪽에 붙인다
+    var top = r.top - hint.offsetHeight - 6;
+    if (top < 8) top = Math.min(8, r.bottom - hint.offsetHeight);
+    hint.style.left = (r.right - c.left - hint.offsetWidth) + 'px';
+    hint.style.top = (top - c.top) + 'px';
+  }
+  content.addEventListener('mousemove', function(e){
+    var b = pick(e.target);
+    if (b === hovered) return;
+    unhover();
+    if (!b) return;
+    hovered = b; b.classList.add('ask-hover');
+    hint.textContent = isHead(b) ? '💬 클릭해서 이 절 전체에 대해 묻기' : '💬 클릭해서 묻기';
+    placeHint(b);
+  });
+  content.addEventListener('mouseleave', unhover);
+  addEventListener('scroll', function(){ if (hovered) placeHint(hovered); }, {passive:true, capture:true});   // #main 스크롤도 잡는다
+  addEventListener('hashchange', unhover);
+
+  function setActive(b){
+    if (active) active.classList.remove('ask-active');
+    active = b;
+    if (b) b.classList.add('ask-active');
+  }
+  content.addEventListener('click', function(e){
+    if (e.button !== 0 || e.detail > 1) { clearTimeout(clickTimer); return; }
+    if (e.target.closest('a, button, summary, input, textarea, select, label')) return;   // 링크·접기 등은 원래 동작
+    var b = pick(e.target);
+    if (!b) return;
+    // 더블클릭(단어 선택)·드래그 선택과 구분하려고 잠깐 기다린 뒤 선택이 없을 때만 연다
+    clearTimeout(clickTimer);
+    clickTimer = setTimeout(function(){
+      var sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+      setActive(b);
+      open(collect(b));
+    }, 230);
+  });
+
+  // ---------- 팝업 ----------
+  var box = document.createElement('div');
+  box.id = 'chatBox'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', '책에 묻기');
+  box.innerHTML =
+    '<div class="ch-head"><span class="ch-title">💬 책에 묻기</span>' +
+    '<button type="button" class="ch-editmode" aria-pressed="false" title="켜면 채팅으로 책 원고를 고칠 수 있습니다 (입력창에서 Ctrl+Enter 로 보내면 켜고 바로 보냅니다). 한 번 고치면 저절로 꺼집니다. 꺼져 있으면 질문에만 답하고 책은 고치지 않습니다">✏️ 책 수정</button>' +
+    '<select class="ch-model" aria-label="답할 모델" title="답할 모델 — Claude(Claude Code 구독) 또는 Codex(ChatGPT 로그인). 대화 도중 바꿔도 이어집니다"></select>' +
+    '<select class="ch-effort" aria-label="추론 에포트" title="추론 에포트 — 높을수록 깊게 생각하지만 느리고 토큰을 더 씁니다. 모델마다 고를 수 있는 단계가 다릅니다"></select>' +
+    '<button type="button" class="reset" title="대화 기록과 요약을 지웁니다">새 대화</button>' +
+    '<button type="button" class="x" aria-label="닫기">&times;</button></div>' +
+    '<div class="ch-main">' +
+    '<nav class="ch-hist" aria-label="이 블록의 대화 이력"><div class="ch-hist-title">이 블록의 대화</div><div class="ch-hist-list"></div></nav>' +
+    '<div class="ch-body">' +
+    '<div class="ch-anchor"></div>' +
+    '<div class="ch-log"></div>' +
+    '<div class="ch-tray" aria-label="붙인 이미지"></div>' +
+    '<div class="ch-input"><button type="button" class="ch-attach" title="이미지 붙이기 — Ctrl+V 로 붙여 넣거나 이 창에 끌어 놓아도 됩니다 (질문 하나에 4장까지)" aria-label="이미지 붙이기">📎</button>' +
+    '<textarea placeholder="질문이나 수정 요청을 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)"></textarea>' +
+    '<button type="button" class="send">전송</button>' +
+    '<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden></div>' +
+    '</div></div>';
+  document.body.appendChild(box);
+  var elAnchor = box.querySelector('.ch-anchor'), elLog = box.querySelector('.ch-log'),
+      input = box.querySelector('textarea'), sendBtn = box.querySelector('.send'),
+      elHist = box.querySelector('.ch-hist-list'), elModel = box.querySelector('.ch-model'), elEffort = box.querySelector('.ch-effort');
+
+  // 모델 선택: 서버의 /api/models (Claude 모델 + Codex CLI 가 있으면 Codex 모델). 고른 모델은 브라우저에 기억한다.
+  // 대화 맥락(요약·최근 턴)은 브라우저가 매 요청에 붙이므로 대화 도중 Claude ↔ Codex 로 바꿔도 이어진다
+  var MODELS = [], EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], wantEffort = 'xhigh';
+  // 추론 에포트: 고른 값을 기억하고, 모델을 바꾸면 그 모델이 지원하는 단계만 보인다(지원하지 않으면 그 아래 가장 높은 값)
+  function fillEfforts(){
+    var m = MODELS.filter(function(x){ return x.id === elModel.value; })[0], es = (m && m.efforts) || [];
+    elEffort.innerHTML = es.map(function(e){ return '<option value="' + esc(e) + '">' + esc(e) + '</option>'; }).join('');
+    var w = EFFORT_ORDER.indexOf(wantEffort), pick = es.indexOf(wantEffort) >= 0 ? wantEffort :
+      es.filter(function(e){ return EFFORT_ORDER.indexOf(e) < w; }).pop() || es[es.length - 1] || '';
+    elEffort.value = pick; elEffort.style.display = es.length ? '' : 'none';
+  }
+  elModel.onchange = function(){ try { localStorage.setItem('bookbot-model', elModel.value); } catch (e) {} fillEfforts(); };
+  elEffort.onchange = function(){ wantEffort = elEffort.value; try { localStorage.setItem('bookbot-effort', wantEffort); } catch (e) {} };
+  fetch('/api/models').then(function(r){ return r.json(); }).then(function(d){
+    MODELS = d.models || [];
+    elModel.innerHTML = [['claude', 'Claude'], ['codex', 'Codex']].map(function(p){
+      var xs = MODELS.filter(function(m){ return m.backend === p[0]; });
+      return xs.length ? '<optgroup label="' + p[1] + '">' + xs.map(function(m){
+        return '<option value="' + esc(m.id) + '">' + esc(m.label) + '</option>'; }).join('') + '</optgroup>' : '';
+    }).join('');
+    var saved = null; try { saved = localStorage.getItem('bookbot-model'); } catch (e) {}
+    elModel.value = MODELS.some(function(m){ return m.id === saved; }) ? saved : d.default;
+    var se = null; try { se = localStorage.getItem('bookbot-effort'); } catch (e) {}
+    wantEffort = EFFORT_ORDER.indexOf(se) >= 0 ? se : (d.default_effort || 'xhigh');
+    fillEfforts();
+  }).catch(function(){ elModel.style.display = 'none'; elEffort.style.display = 'none'; });   // file:// 로 열었거나 서버가 없을 때
+
+  // [✏️ 책 수정] 모드: 켠 동안 보낸 요청에만 edit:true 를 붙인다(서버는 그 요청에만 수정 도구를 준다).
+  // 수정 요청 하나로 원고가 실제로 고쳐지면 그 답변이 끝날 때 저절로 끈다(고치지 않고 되물었으면 켠 채로 둔다).
+  // 저장하지 않으므로 페이지를 새로 열면 늘 꺼진 상태로 시작한다
+  var editMode = false, elEditMode = box.querySelector('.ch-editmode');
+  var PH_ASK = '질문을 입력하세요 (Enter 전송, Shift+Enter 줄바꿈, Ctrl+Enter 책 수정 요청으로 전송)',
+      PH_EDIT = '✏️ 책 수정 모드 — 고칠 내용을 입력하세요. 예: "이 문단을 더 쉽게 고쳐 줘" (한 번 고치면 저절로 꺼집니다)';
+  function setEditMode(on){
+    editMode = on;
+    elEditMode.setAttribute('aria-pressed', String(on));
+    elEditMode.textContent = on ? '✏️ 책 수정 켜짐' : '✏️ 책 수정';
+    box.classList.toggle('editing', on);
+    input.placeholder = on ? PH_EDIT : PH_ASK;
+  }
+  elEditMode.onclick = function(){ setEditMode(!editMode); input.focus(); };
+  setEditMode(false);
+  function autoOffEdit(after){
+    if (!editMode) return;
+    setEditMode(false);
+    after.insertAdjacentHTML('afterend', '<div class="ch-note">✏️ 수정을 마쳐 [책 수정] 모드를 껐습니다. 더 고치려면 다시 켜세요.</div>');
+  }
+
+  // ---------- 이미지 첨부 ----------
+  // Ctrl+V(화면 캡처 등)·끌어 놓기·📎 로 붙인다. 긴 변이 1568px 를 넘거나 3.5MB 를 넘으면 브라우저에서 줄여 보낸다
+  // (모델이 그보다 큰 이미지는 어차피 줄여서 본다). 이미지는 그 질문에만 모델에 보내고, 서버는 대화 이력용으로 저장한다
+  var IMG_MAX_SIDE = 1568, IMG_MAX_BYTES = 3.5 * 1024 * 1024, IMG_MAX_COUNT = 4,
+      IMG_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  var attach = [], elTray = box.querySelector('.ch-tray'), elFile = box.querySelector('.ch-input input[type=file]'), trayTimer = null;
+  function kb(n){ return n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB'; }
+  function renderTray(msg){
+    if (msg !== undefined) { clearTimeout(trayTimer); trayTimer = msg ? setTimeout(function(){ renderTray(''); }, 4000) : null; elTray.dataset.msg = msg; }
+    var m = elTray.dataset.msg || '';
+    elTray.classList.toggle('has', attach.length > 0); elTray.classList.toggle('msg', !!m);
+    elTray.innerHTML = attach.map(function(a, i){
+      return '<div class="ch-thumb" title="' + esc(a.name) + ' (' + kb(a.bytes) + ')"><img src="' + esc(a.url) + '" alt="">' +
+        '<button type="button" data-i="' + i + '" aria-label="이 이미지 빼기" title="빼기">×</button><span class="sz">' + kb(a.bytes) + '</span></div>';
+    }).join('') + (m ? '<span class="tmsg">' + esc(m) + '</span>' : '');
+  }
+  elTray.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-i]'); if (!b) return;
+    attach.splice(+b.dataset.i, 1); renderTray(); input.focus();
+  });
+  function readImage(file){
+    return new Promise(function(ok, fail){
+      if (IMG_TYPES.indexOf(file.type) < 0) return fail(new Error('PNG·JPEG·WebP·GIF 이미지만 붙일 수 있습니다.'));
+      var src = URL.createObjectURL(file), img = new Image(), name = file.name || '붙여 넣은 이미지';
+      img.onload = function(){
+        var w = img.naturalWidth, h = img.naturalHeight, scale = Math.min(1, IMG_MAX_SIDE / Math.max(w, h));
+        if (scale === 1 && file.size <= IMG_MAX_BYTES) {            // 그대로 보낸다
+          var fr = new FileReader();
+          fr.onload = function(){ URL.revokeObjectURL(src); var d = fr.result; ok({ media_type: file.type, data: d.slice(d.indexOf(',') + 1), url: d, bytes: file.size, name: name }); };
+          fr.onerror = function(){ URL.revokeObjectURL(src); fail(new Error('이미지를 읽지 못했습니다.')); };
+          return fr.readAsDataURL(file);
+        }
+        var c = document.createElement('canvas');                // 줄여서 다시 인코딩 (투명 부분은 흰 바탕)
+        c.width = Math.max(1, Math.round(w * scale)); c.height = Math.max(1, Math.round(h * scale));
+        var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(src);
+        var type = file.type === 'image/png' ? 'image/png' : 'image/jpeg', d = c.toDataURL(type, 0.88);
+        if (type === 'image/png' && d.length * 0.75 > IMG_MAX_BYTES) { type = 'image/jpeg'; d = c.toDataURL(type, 0.88); }   // 화면 캡처는 PNG 가 글자가 또렷하다
+        ok({ media_type: type, data: d.slice(d.indexOf(',') + 1), url: d, bytes: Math.round((d.length - d.indexOf(',') - 1) * 0.75), name: name });
+      };
+      img.onerror = function(){ URL.revokeObjectURL(src); fail(new Error('이미지를 열지 못했습니다.')); };
+      img.src = src;
+    });
+  }
+  function addFiles(files){
+    var list = [].slice.call(files || []).filter(function(f){ return f && /^image\//.test(f.type); });
+    if (!list.length) return false;
+    var room = IMG_MAX_COUNT - attach.length;
+    if (room <= 0) { renderTray('이미지는 질문 하나에 ' + IMG_MAX_COUNT + '장까지 붙일 수 있습니다.'); return true; }
+    if (list.length > room) renderTray(IMG_MAX_COUNT + '장까지만 붙였습니다.');
+    list.slice(0, room).forEach(function(f){
+      readImage(f).then(function(a){
+        if (attach.length >= IMG_MAX_COUNT) return renderTray('이미지는 질문 하나에 ' + IMG_MAX_COUNT + '장까지 붙일 수 있습니다.');
+        attach.push(a); renderTray();
+      }, function(err){ renderTray(err.message); });
+    });
+    return true;
+  }
+  // 붙여 넣기: 클립보드에 이미지가 있으면 붙인다. 글자도 함께 있으면(엑셀 등) 글자는 입력창에 그대로 들어간다
+  box.addEventListener('paste', function(e){
+    var cd = e.clipboardData; if (!cd) return;
+    var files = [].slice.call(cd.items || []).filter(function(it){ return it.kind === 'file' && /^image\//.test(it.type); })
+                  .map(function(it){ return it.getAsFile(); });
+    if (!files.length) return;
+    if (!(cd.getData('text/plain') || '').trim()) e.preventDefault();
+    addFiles(files);
+  });
+  // 끌어 놓기: 파일을 챗 창 위로 끌고 오면 점선 테두리, 놓으면 붙인다
+  var dragDepth = 0;
+  function hasFiles(e){ return e.dataTransfer && [].indexOf.call(e.dataTransfer.types || [], 'Files') >= 0; }
+  box.addEventListener('dragenter', function(e){ if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; box.classList.add('dropping'); });
+  box.addEventListener('dragover', function(e){ if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  box.addEventListener('dragleave', function(e){ if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; box.classList.remove('dropping'); } });
+  box.addEventListener('drop', function(e){
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth = 0; box.classList.remove('dropping');
+    if (!addFiles(e.dataTransfer.files)) renderTray('이미지 파일만 붙일 수 있습니다.');
+    input.focus();
+  });
+  box.querySelector('.ch-attach').onclick = function(){ elFile.click(); };
+  elFile.onchange = function(){ addFiles(elFile.files); elFile.value = ''; input.focus(); };
+  // 보낸 질문의 썸네일은 클릭하면 크게/작게
+  box.addEventListener('click', function(e){ if (e.target.matches && e.target.matches('.ch-imgs img')) e.target.classList.toggle('big'); });
+  function imgsHtml(urls){
+    return urls.length ? '<div class="ch-imgs">' + urls.map(function(u){ return '<img src="' + esc(u) + '" alt="붙인 이미지" title="클릭하면 크게 봅니다">'; }).join('') + '</div>' : '';
+  }
+
+  // convId: 지금 대화의 이력 id. 첫 질문을 보낼 때 만들고, 창이 사라지면(닫기·Esc·새 대화·새로고침) 버린다
+  var state = { summary: '', history: [], anchor: null, busy: false, convId: null, firstQ: '', firstSection: '' };
+  var EMPTY = '<div class="ch-empty">클릭한 블록(파란 테두리)과 앞뒤 문단을 참고해 답합니다. 다른 블록을 클릭하면 맥락이 그 위치로 바뀝니다. 더 필요하면 책의 색인과 관련 절을 직접 찾아 읽습니다.<br>' +
+              '<b>절 제목</b>(예: "2.2 …")을 클릭하면 그 절 전체를 맥락으로 묻습니다. 예: "이 절을 요약해 줘", "이 절의 핵심 흐름을 그림으로 설명해 줘"<br>' +
+              '예: "이 설계가 왜 필요한가요?", "V1에서는 이걸 어떻게 처리했나요?"<br>' +
+              '화면 캡처 같은 이미지는 <b>Ctrl+V</b>로 붙여 넣거나, 이 창에 끌어 놓거나, 📎 버튼으로 붙일 수 있습니다(질문 하나에 4장까지).<br>' +
+              '책을 고치려면 위의 <b>[✏️ 책 수정]</b>을 켜고 요청하거나, 요청을 쓰고 <b>Ctrl+Enter</b>로 보내세요. 예: "이 문단을 더 쉽게 고쳐 줘", "이 표에 V1 열을 추가해" — 꺼져 있으면 책은 고치지 않고, 한 번 고치면 저절로 꺼집니다. 고친 뒤에는 답변 아래에서 변경 내용을 보고 되돌릴 수 있습니다.</div>';
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function renderAnchor(){
+    var a = state.anchor;
+    elAnchor.innerHTML = !a ? '📍 위치 없음 — 본문의 문단·코드·표·그림을 클릭하면 그 위치를, 절 제목을 클릭하면 그 절 전체를 맥락으로 함께 보냅니다.'
+      : a.scope === 'section' ? '📍 <b>' + esc(a.section_title) + '</b><div class="q">📚 이 절 전체에 대해 묻습니다 — 절 본문 전체를 맥락으로 보냅니다.</div>'
+      : '📍 <b>' + esc(a.section_title) + '</b><div class="q">' + esc(/^\[다이어그램/.test(a.target) ? '🖼 ' + a.target.split('\n')[0].slice(1, -1) : a.target.replace(/```\w*\n?/g, '')) + '</div>';
+  }
+
+  // 마크다운: marked(GFM — 표·제목·목록·코드) → DOMPurify 로 소독. 라이브러리가 없으면 이스케이프한 원문.
+  // CommonMark 는 닫는 ** 앞이 문장부호이고 뒤에 조사가 붙으면(**"…"**이라는) 굵게로 보지 않는다.
+  // 코드 블록·인라인 코드를 뺀 부분의 **…** 를 미리 <strong> 으로 바꿔 한국어 문장에서도 굵게가 되게 한다.
+  function boldFix(src){
+    return src.split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/).map(function(seg, i){
+      return i % 2 ? seg : seg.replace(/\*\*(?=\S)([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+    }).join('');
+  }
+  function md(src){
+    if (window.marked && window.DOMPurify)
+      return DOMPurify.sanitize(marked.parse(boldFix(src || ''), { gfm: true, breaks: true }));
+    return '<p>' + esc(src || '').replace(/\n/g, '<br>') + '</p>';
+  }
+  // 렌더 후처리: 외부 링크는 새 탭, 코드 강조, ```mermaid 는 다이어그램으로 (final 일 때만 — 쓰는 중인 원문은 그리지 않음)
+  var mmdSeq = 0;
+  function enhance(el, final){
+    el.querySelectorAll('a[href]').forEach(function(a){
+      if (a.getAttribute('href').charAt(0) !== '#') { a.target = '_blank'; a.rel = 'noopener'; }
+    });
+    if (!final) return;
+    el.querySelectorAll('pre code').forEach(function(c){
+      if (!c.classList.contains('language-mermaid')) { if (window.hljs) hljs.highlightElement(c); return; }
+      var src = c.textContent, holder = document.createElement('div'), id = 'chmmd' + (++mmdSeq);
+      holder.className = 'ch-mmd';
+      c.parentElement.replaceWith(holder);
+      var fallback = function(){
+        var junk = document.getElementById('d' + id); if (junk) junk.remove();   // mermaid 가 남긴 오류 요소
+        holder.innerHTML = '<div class="ch-mmd-err">다이어그램 문법 오류로 원문을 보여 줍니다.</div><pre><code>' + esc(src) + '</code></pre>';
+      };
+      if (!window.mermaid) return fallback();
+      try { mermaid.render(id, src).then(function(r){ holder.innerHTML = r.svg; }, fallback); } catch (e) { fallback(); }
+    });
+  }
+
+  // 답변 말풍선에 복사 버튼을 붙인다. 복사하는 것은 마크다운 원문
+  var ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+      ICON_DONE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+  function copyText(text){
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function(ok, fail){      // file:// 등 보안 컨텍스트가 아닐 때
+      var t = document.createElement('textarea'); t.value = text; t.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(t); t.select();
+      try { document.execCommand('copy') ? ok() : fail(); } catch (e) { fail(e); } finally { t.remove(); }
+    });
+  }
+  function addCopy(bubble, text){
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'ch-copy'; b.title = '답변 복사'; b.setAttribute('aria-label', '답변 복사'); b.innerHTML = ICON_COPY;
+    b.onclick = function(){
+      copyText(text).then(function(){
+        b.classList.add('done'); b.innerHTML = ICON_DONE; b.title = '복사했습니다';
+        setTimeout(function(){ b.classList.remove('done'); b.innerHTML = ICON_COPY; b.title = '답변 복사'; }, 1500);
+      }, function(){ b.title = '복사하지 못했습니다'; });
+    };
+    bubble.appendChild(b);
+  }
+
+  // 탐색 기록 요약·항목: 책(read)과 웹(Firecrawl)을 구분해 보여 준다
+  function srcLabel(nRead, nWeb){
+    var p = [];
+    if (nRead) p.push('read ' + nRead + '회');
+    if (nWeb) p.push('웹 ' + nWeb + '회');
+    return p.length ? p.join(' · ') : '클릭 맥락만으로 답함';
+  }
+  function webLine(w){
+    if (w.type === 'search') return '🔎 웹 검색 <code>' + esc(w.query || '') + '</code>';
+    return '🌐 웹 페이지 <a href="' + esc(w.url || '') + '" target="_blank" rel="noopener">' + esc(w.title || w.url || '') + '</a>';
+  }
+
+  // ---------- 책 수정 (서버 replace_text → 원고 src/chNN.html 수정 → 책·색인 재빌드) ----------
+  // 원고 변경을 앞뒤 공통 부분을 줄인 diff 로: …앞 문맥 <del>지운 것</del><ins>넣은 것</ins> 뒤 문맥…
+  function diffHtml(a, b){
+    var i = 0, n = Math.min(a.length, b.length), j = 0, C = 80;
+    while (i < n && a[i] === b[i]) i++;
+    while (j < n - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+    var pre = a.slice(0, i), del = a.slice(i, a.length - j), ins = b.slice(i, b.length - j), post = a.slice(a.length - j);
+    return '<span class="ctx">' + esc(pre.length > C ? '…' + pre.slice(-C) : pre) + '</span>' +
+      (del ? '<del>' + esc(del) + '</del>' : '') + (ins ? '<ins>' + esc(ins) + '</ins>' : '') +
+      '<span class="ctx">' + esc(post.length > C ? post.slice(0, C) + '…' : post) + '</span>';
+  }
+  // HTML 조각의 글자만 (DOMParser 문서는 스크립트·이미지를 실행·로드하지 않는다)
+  function plain(html){ return (new DOMParser().parseFromString(html, 'text/html').body.textContent || '').replace(/\s+/g, ' ').trim(); }
+  // 고친 장을 새로고침 없이 바꿔 끼운다: 서버의 새 책 HTML 에서 그 장(section.chapter)의 내용만 가져와
+  // 다이어그램 원문(data-src)을 다시 잡고, 보이는 장이면 바로 그리고, 목차의 절 목록과 💬 표시를 갱신한다
+  function refreshChapters(ids){
+    return fetch('/?_=' + Date.now(), { cache: 'no-store' }).then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status); return r.text();
+    }).then(function(html){
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      ids.forEach(function(id){
+        var cur = document.getElementById(id), fresh = doc.getElementById(id);
+        if (!cur || !fresh || !cur.classList.contains('chapter')) return;
+        var pager = cur.querySelector(':scope > .pager');
+        while (cur.firstChild) cur.removeChild(cur.firstChild);
+        [].slice.call(fresh.childNodes).forEach(function(n){ cur.appendChild(document.importNode(n, true)); });
+        if (pager) cur.appendChild(pager);
+        var nodes = [].slice.call(cur.querySelectorAll('.mermaid'));
+        nodes.forEach(function(n){ n.dataset.src = [].map.call(n.childNodes, function(c){ return c.nodeType === 3 ? c.data : c.outerHTML; }).join(''); });
+        if (cur.classList.contains('show') && window.mermaid && nodes.length) {     // 숨은 장은 열 때 책 스크립트가 그린다
+          nodes.forEach(function(n){ n.textContent = n.dataset.src; n.dataset.done = '1'; });
+          mermaid.run({ nodes: nodes }).catch(function(e){ console.warn(e); });
+        }
+        var li = document.querySelector('#toc li.ch[data-ch="' + id + '"]'), ul = li && li.querySelector('ul');
+        if (li) {
+          var h1 = cur.querySelector('h1'); if (h1) li.firstChild.innerHTML = h1.innerHTML;
+          if (ul) ul.innerHTML = [].map.call(cur.querySelectorAll('h2[id]'), function(h){
+            return '<li><a href="#' + esc(h.id) + '">' + esc(h.textContent) + '</a></li>'; }).join('');
+        }
+      });
+      unhover(); setActive(null); markBlocks();
+    }).catch(function(err){ console.warn('책 갱신 실패', err); });
+  }
+  // 고친 곳으로 이동해 잠깐 강조한다. 바뀐 글자가 들어 있는 블록을 찾고, 못 찾으면 절 제목으로
+  function showEdited(e){
+    var go = function(){
+      var ch = document.getElementById(e.chapter); if (!ch) return;
+      var a = e.old, b = e.new, i = 0, n = Math.min(a.length, b.length);
+      while (i < n && a[i] === b[i]) i++;
+      var needle = plain(b.slice(i)).slice(0, 30) || plain(b).slice(0, 30), hit = null;
+      if (needle.length >= 4) ch.querySelectorAll('*').forEach(function(el){
+        if (!hit && isBlock(el) && el.textContent.replace(/\s+/g, ' ').indexOf(needle) >= 0) hit = el;
+      });
+      hit = hit || document.getElementById(e.section) || ch;
+      hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      hit.classList.remove('ch-edited'); void hit.offsetWidth; hit.classList.add('ch-edited');
+      setTimeout(function(){ hit.classList.remove('ch-edited'); }, 2700);
+    };
+    var ch = document.getElementById(e.chapter);
+    if (ch && !ch.classList.contains('show')) { location.hash = '#' + e.section; setTimeout(go, 700); }   // 다른 장이면 먼저 연다
+    else go();
+  }
+  function editCard(e){
+    var d = document.createElement('div');
+    d.className = 'ch-edit';
+    d.innerHTML = '<div class="eh"><span class="t">✏️ 책 수정 — <a href="#' + esc(e.section) + '">#' + esc(e.section) + '</a></span>' +
+      '<button type="button" class="go">고친 곳 보기</button><button type="button" class="undo">되돌리기</button></div>' +
+      '<details><summary>원고 변경 보기 (' + esc(e.file) + ', ' + e.old.length.toLocaleString() + '자 → ' + e.new.length.toLocaleString() + '자)</summary>' +
+      '<pre class="diff">' + diffHtml(e.old, e.new) + '</pre></details>';
+    d.querySelector('.go').onclick = function(){ showEdited(e); };
+    var undo = d.querySelector('.undo');
+    undo.onclick = function(){
+      BookDialog.confirm({ title: '수정 되돌리기', message: '#' + e.section + ' 에서 고친 내용을 원래대로 되돌릴까요?', ok: '되돌리기' }).then(function(yes){
+        if (!yes) return;
+        undo.disabled = true; undo.textContent = '되돌리는 중…';
+        fetch('/api/edits/' + encodeURIComponent(e.edit_id) + '/revert', { method: 'POST' }).then(function(r){
+          return r.json().then(function(j){ if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status)); return j; });
+        }).then(function(){
+          d.classList.add('reverted'); undo.textContent = '되돌림 ✓';
+          d.querySelector('.go').disabled = true;
+          refreshChapters([e.chapter]);
+        }, function(err){
+          undo.disabled = false; undo.textContent = '되돌리기';
+          BookDialog.alert({ title: '되돌리지 못했습니다', message: String(err.message || err) });
+        });
+      });
+    };
+    return d;
+  }
+
+  function add(cls, html){
+    var d = document.createElement('div');
+    d.className = cls; d.innerHTML = html;
+    var empty = elLog.querySelector('.ch-empty'); if (empty) empty.remove();
+    elLog.appendChild(d); elLog.scrollTop = elLog.scrollHeight;
+    return d;
+  }
+  function nearBottom(){ return elLog.scrollHeight - elLog.scrollTop - elLog.clientHeight < 60; }
+  // 스트리밍 중 답변 갱신: 전체 innerHTML 을 갈아 끼우면 매번 답변 전체가 다시 배치·래스터되어
+  // 스크롤이 끊기고 이전 프레임 글자가 겹쳐 보이는 일이 생긴다. 바뀐 블록만 바꾸고 같은 블록은 그대로 둔다.
+  function patchHtml(el, html){
+    var t = document.createElement('div'); t.innerHTML = html;
+    var neu = Array.prototype.slice.call(t.childNodes);
+    for (var i = 0; i < neu.length; i++) {
+      var o = el.childNodes[i], n = neu[i], src = n.nodeType === 1 ? n.outerHTML : n.textContent;
+      if (o && o.__src === src) continue;
+      n.__src = src;
+      if (o) el.replaceChild(n, o); else el.appendChild(n);
+    }
+    while (el.childNodes.length > neu.length) el.removeChild(el.lastChild);
+  }
+  // 따라가기: 질문을 보내면 켜고, 답변 말풍선이 커질 때마다 맨 아래로 내린다.
+  // 사용자가 위로 올려 읽으면 멈추고, 다시 맨 아래 근처로 내려오면 이어서 따라간다.
+  var follow = true, followObs = null;
+  function stick(){ if (follow) elLog.scrollTop = elLog.scrollHeight; }
+  function followMsg(m){
+    follow = true;
+    if (followObs) followObs.disconnect();
+    if (window.ResizeObserver) { followObs = new ResizeObserver(stick); followObs.observe(m); }
+    stick();
+  }
+  elLog.addEventListener('wheel', function(e){ if (e.deltaY < 0) follow = false; }, {passive:true});
+  elLog.addEventListener('touchmove', function(){ follow = false; }, {passive:true});
+  elLog.addEventListener('mousedown', function(e){ if (e.offsetX > elLog.clientWidth) follow = false; });   // 스크롤바 끌기
+  // 키보드(PageUp·화살표)나 스크롤바 트랙 클릭처럼 wheel 이 아닌 방법으로 올려도 따라가기를 멈춘다
+  var lastTop = 0;
+  elLog.addEventListener('scroll', function(){
+    if (nearBottom()) follow = true;
+    else if (elLog.scrollTop < lastTop - 2) follow = false;
+    lastTop = elLog.scrollTop;
+  }, {passive:true});
+
+  function send(){
+    var q = input.value.trim();
+    if ((!q && !attach.length) || state.busy) return;
+    if (!q) q = '붙인 이미지를 보고 설명해 주세요.';
+    var asEdit = editMode;                       // 보내는 순간의 모드 (답을 받는 중에 꺼도 이 요청은 그대로)
+    var imgs = attach.slice(); attach = []; renderTray('');
+    add('ch-msg user', imgsHtml(imgs.map(function(a){ return a.url; })) +
+        (asEdit ? '<span class="ch-tag" title="책 수정 모드에서 보낸 요청">✏️ 수정</span>' : '') + esc(q));
+    input.value = '';
+    if (location.protocol === 'file:') {
+      add('ch-msg err', '챗봇은 서버에서 열어야 동작합니다. 책 폴더에서 <code>python -m bookbot serve</code> 실행 후 <code>http://127.0.0.1:&lt;book.toml 의 port&gt;/</code>로 접속하세요.');
+      return;
+    }
+    state.busy = true; sendBtn.disabled = true;
+    if (!state.convId) {       // 새 대화의 첫 질문 → 이력 버튼 생성
+      state.convId = newId(); state.firstQ = q; state.firstSection = state.anchor ? state.anchor.section_title : '';
+      renderHist();
+    }
+    var cid = state.convId;
+
+    // 스트리밍 말풍선: 상태 줄 · 생각 · 탐색 기록 · 답변
+    var m = add('ch-msg bot',
+      '<div class="ch-status"><span class="dot"></span><span class="txt">연결 중</span><span class="hint" title="Esc 를 누르면 답변 생성을 멈춥니다">Esc 중지</span><span class="time">0.0s</span></div>' +
+      '<details class="ch-think" open hidden><summary>💭 생각</summary><div class="think-body"></div></details>' +
+      '<ol class="ch-trace"></ol><div class="ch-answer"></div>');
+    followMsg(m);
+    var elStatus = m.querySelector('.ch-status'), elTxt = m.querySelector('.ch-status .txt'), elTime = m.querySelector('.ch-status .time'),
+        elThink = m.querySelector('.ch-think'), elThinkBody = m.querySelector('.think-body'),
+        elTrace = m.querySelector('.ch-trace'), elAnswer = m.querySelector('.ch-answer');
+    var t0 = Date.now(), answer = '', thinking = '', reads = 0, webs = 0, renderTimer = null, finished = false, edits = [];
+    function editCards(){ edits.forEach(function(e){ m.appendChild(editCard(e)); }); }
+    var clock = setInterval(function(){ elTime.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
+    function renderSoon(){
+      if (renderTimer) return;
+      renderTimer = setTimeout(function(){
+        renderTimer = null;
+        patchHtml(elAnswer, md(answer)); enhance(elAnswer, false);
+        stick();
+      }, 80);
+    }
+    function trace(html, cls){
+      var li = document.createElement('li'); if (cls) li.className = cls; li.innerHTML = html;
+      elTrace.appendChild(li); stick();
+    }
+    function finish(){
+      finished = true; clearInterval(clock); clearTimeout(renderTimer);
+      state.busy = false; state.running = null; sendBtn.disabled = false; input.focus();
+    }
+    // Esc 중지: 화면은 그 자리에서 끝내 제어권을 바로 돌려준다. 서버의 마무리(모델 프로세스 정리·대화 저장·사용량)는
+    // stopped 이벤트로 뒤늦게 받아 기록만 맞춘다. 그 전에 다음 질문을 보내면 send 가 state.pendingStop 을 기다렸다가
+    // 서버가 저장한 기록(이번 턴 + "중지함" 표시)을 실어 보낸다.
+    var rid = newId(), ctrl = window.AbortController ? new AbortController() : null, stopping = false, started = false,
+        pending = null, settle = null, stopTimer = null;
+    function settleStop(){
+      clearTimeout(stopTimer);
+      if (!settle) return;
+      var s = settle; settle = null;
+      if (state.pendingStop === pending) state.pendingStop = null;
+      s();
+    }
+    state.running = { stop: function(){
+      if (finished || stopping) return;
+      stopping = true;
+      pending = new Promise(function(r){ settle = r; });
+      state.pendingStop = pending;
+      if (started) {
+        fetch('/api/chat/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ request_id: rid }) })
+          .catch(function(){});
+        // 서버가 정리에 오래 걸리거나 닿지 않으면 기다리기를 그만두고 연결을 끊는다(서버 쪽 저장은 그대로 진행)
+        stopTimer = setTimeout(function(){ if (ctrl) ctrl.abort(); settleStop(); }, 8000);
+      }
+      showStopped();
+      if (!started) settleStop();               // 앞 질문의 마무리를 기다리던 중이면 서버에 보낸 것이 없다
+    } };
+    function showStopped(){
+      var secs = ((Date.now() - t0) / 1000).toFixed(1), text = answer.trim();
+      elStatus.remove();
+      clearTimeout(renderTimer); renderTimer = null;
+      patchHtml(elAnswer, text ? md(text) : '');
+      if (text) { enhance(elAnswer, true); addCopy(m, text); }
+      if (thinking) elThink.querySelector('summary').textContent = '💭 생각 과정 (' + thinking.length.toLocaleString() + '자)';
+      elThink.open = false;
+      m.querySelectorAll('.ch-draft').forEach(function(d){ d.open = false; });
+      editCards();
+      if (elTrace.children.length) {
+        var ssum = document.createElement('details');
+        ssum.innerHTML = '<summary>탐색 기록 — ' + srcLabel(reads, webs) + (edits.length ? ' · 수정 ' + edits.length + '건' : '') + '</summary>';
+        ssum.appendChild(elTrace);
+        m.appendChild(ssum);
+      }
+      m.insertAdjacentHTML('beforeend', '<div class="ch-stopped">⏹ 중지함 · ' + secs + 's</div>');
+      if (edits.length) autoOffEdit(m);         // 중지 전에 고친 곳은 되돌릴 수 있게 남기고 수정 모드는 끈다
+      finish();
+    }
+    // 서버가 저장한 마무리를 반영한다. 화면에 닿기 전에 끊긴 마지막 조각이 있으면 서버 쪽 답으로 다시 그린다
+    function syncStopped(ev){
+      if (ev.answer != null && ev.answer.trim() !== answer.trim()) {
+        answer = ev.answer;
+        patchHtml(elAnswer, md(ev.answer)); enhance(elAnswer, true);
+        var oldCopy = m.querySelector(':scope > .ch-copy'); if (oldCopy) oldCopy.remove();
+        if (ev.answer.trim()) addCopy(m, ev.answer);
+      }
+      if (state.convId === cid) { state.summary = ev.summary || ''; state.history = ev.history || state.history; }
+      if (ev.usage_record) BookUsage.add(ev.usage_record);
+      loadHist();
+    }
+    function onEvent(ev){
+      if (finished) {           // Esc 로 화면은 이미 끝냄: 서버의 마무리만 받는다
+        if (!stopping) return;
+        if (ev.type === 'stopped' || ev.type === 'done') { syncStopped(ev); settleStop(); }
+        else if (ev.type === 'edit' && !ev.error) {         // 중지 직전에 끝난 수정: 되돌릴 수 있게 카드만 붙인다
+          edits.push(ev); m.appendChild(editCard(ev)); refreshChapters([ev.chapter]); autoOffEdit(m);
+        }
+        else if (ev.type === 'error') { BookUsage.reload(); settleStop(); }
+        return;
+      }
+      if (ev.type === 'status') elTxt.textContent = ev.text;
+      else if (ev.type === 'thinking') {
+        thinking += ev.delta; elThink.hidden = false;
+        var thinkStick = elThinkBody.scrollHeight - elThinkBody.scrollTop - elThinkBody.clientHeight < 30;
+        elThinkBody.textContent = thinking;
+        if (thinkStick) elThinkBody.scrollTop = elThinkBody.scrollHeight;
+      }
+      else if (ev.type === 'answer') {
+        if (!answer) { elTxt.textContent = '답변 작성 중'; elThink.open = false; }
+        answer += ev.delta; renderSoon();
+      }
+      else if (ev.type === 'answer_reset') {      // 도구 호출 앞의 말: 지우지 않고 '초안'으로 남기고, 최종 답변은 그 아래에 새로 쓴다
+        clearTimeout(renderTimer); renderTimer = null;
+        var draft = document.createElement('details');
+        draft.className = 'ch-draft'; draft.open = true;
+        draft.innerHTML = '<summary>📝 책을 더 확인하기 전에 쓴 초안 (' + answer.length.toLocaleString() + '자)</summary><div class="draft-body"></div>';
+        draft.querySelector('.draft-body').innerHTML = md(answer); enhance(draft.querySelector('.draft-body'), false);
+        elAnswer.parentNode.insertBefore(draft, elAnswer);
+        answer = ''; elAnswer.innerHTML = '';
+      }
+      else if (ev.type === 'read') {
+        reads++;
+        trace((ev.kind === 'code' ? '🧩 ' : '📖 ') + '<code>' + esc(ev.path) + '</code> ' + (ev.error ? '— 거부/없음' + (ev.message ? ': ' + esc(ev.message) : '') : '— ' + ev.chars.toLocaleString() + '자'));
+      }
+      else if (ev.type === 'search' || ev.type === 'fetch') {
+        webs++;
+        trace(webLine(ev) + (ev.error ? ' — 실패: ' + esc(ev.message || '') : ev.type === 'search' ? ' — ' + ev.count + '건' : ev.chars != null ? ' — ' + ev.chars.toLocaleString() + '자' : '') +
+              (ev.credits ? ' · 크레딧 ' + ev.credits : ''), 'web');
+      }
+      else if (ev.type === 'edit') {
+        if (ev.error) trace('✏️ 수정 실패 <code>' + esc(ev.id || '') + '</code> — ' + esc(ev.message || ''), 'compact');
+        else {
+          edits.push(ev);
+          trace('✏️ <code>' + esc(ev.file) + '</code> #' + esc(ev.section) + ' 수정 (' + ev.old.length.toLocaleString() + '자 → ' + ev.new.length.toLocaleString() + '자)');
+          refreshChapters([ev.chapter]);        // 답변을 기다리지 않고 책 화면에 바로 반영
+        }
+      }
+      else if (ev.type === 'compact') {
+        trace('🗜 ' + esc(ev.detail), 'compact');
+        if (ev.summary) m.insertAdjacentHTML('beforebegin', '<div class="ch-note"><details><summary>' + esc(ev.detail) +
+          '</summary><div class="sum">' + md(ev.summary) + '</div></details></div>');
+      }
+      else if (ev.type === 'done') {
+        var secs = ((Date.now() - t0) / 1000).toFixed(1);
+        elStatus.remove();
+        clearTimeout(renderTimer); renderTimer = null;
+        patchHtml(elAnswer, md(ev.answer)); enhance(elAnswer, true);
+        addCopy(m, ev.answer);
+        if (thinking) elThink.querySelector('summary').textContent = '💭 생각 과정 (' + thinking.length.toLocaleString() + '자)';
+        elThink.open = false;
+        m.querySelectorAll('.ch-draft').forEach(function(d){ d.open = false; });   // 초안은 접어 두되 남긴다
+        // 실시간 목록을 접히는 탐색 기록으로 정리 — read 가 없어도 펼치면 호출·토큰·비용이 보이게
+        var u = ev.usage || {}, cost = u.cost != null ? ' · ' + BookUsage.usd(u.cost) : '';
+        if (!reads && !webs) trace('📌 클릭한 블록 맥락만으로 답함 (read 없음)');
+        if (u.firecrawl_credits) trace('🔥 Firecrawl 크레딧 ' + u.firecrawl_credits + ' (모델 비용과 별도)');
+        trace('🤖 ' + esc(ev.usage_record ? ev.usage_record.model : '') + ' · 모델 호출 ' + (u.calls || 0) + '회');
+        trace('🔢 입력 ' + BookUsage.tok(u.prompt_tokens) + ' 토큰 (캐시 ' + BookUsage.tok(u.cached_tokens) + ') · 출력 ' +
+              BookUsage.tok(u.completion_tokens) + ' 토큰 (생각 ' + BookUsage.tok(u.reasoning_tokens) + ')');
+        trace('💰 ' + (u.cost != null ? '입력 ' + BookUsage.usd(u.input_cost) + ' + 출력 ' + BookUsage.usd(u.output_cost) +
+              ' = <b>' + BookUsage.usd(u.cost) + '</b>' : u.codex ? 'Codex 는 비용 금액을 알려 주지 않아 토큰만 표시합니다' : '단가 정보 없음'));
+        editCards();
+        var sum = document.createElement('details');
+        sum.innerHTML = '<summary>탐색 기록 — ' + srcLabel(reads, webs) + (edits.length ? ' · 수정 ' + edits.length + '건' : '') + ' · ' + secs + 's' + cost + '</summary>';
+        sum.appendChild(elTrace);
+        m.appendChild(sum);
+        if (edits.length) autoOffEdit(m);       // 한 번 고쳤으면 수정 모드를 끈다
+        if (state.convId === cid) { state.summary = ev.summary || ''; state.history = ev.history || []; }   // 도중에 창을 닫았으면 새 대화에 섞지 않는다
+        BookUsage.add(ev.usage_record);
+        loadHist();
+        finish();
+      }
+      else if (ev.type === 'stopped') {         // 이 화면의 Esc 가 아닌 다른 경로로 멈춘 경우
+        if (ev.answer != null) answer = ev.answer;
+        showStopped(); syncStopped(ev);
+      }
+      else if (ev.type === 'error') {
+        elStatus.remove();
+        m.insertAdjacentHTML('afterend', '<div class="ch-msg err">오류: ' + esc(ev.message) + '</div>');
+        if (edits.length) { editCards(); autoOffEdit(m); }     // 도중에 실패해도 이미 고친 곳은 되돌릴 수 있게 남기고 수정 모드는 끈다
+        else if (!answer) m.remove();
+        BookUsage.reload();      // 도중에 실패해도 이미 쓴 호출은 서버에 기록된다
+        finish();
+      }
+    }
+
+    // 앞 질문을 Esc 로 멈춘 직후면, 서버가 그 턴을 저장해 돌려준 기록(state.summary·history)을 받은 뒤에 보낸다
+    var prev = state.pendingStop;
+    if (prev) { elTxt.textContent = '앞 답변 정리 중'; prev.then(go); } else go();
+    function go(){
+    if (finished) return;                       // 기다리는 동안 Esc 로 멈췄다
+    started = true; elTxt.textContent = '연결 중';
+    fetch('/api/chat/stream', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ question: q, anchor: state.anchor, summary: state.summary, history: state.history, conversation_id: cid, book: BOOK_ID,
+                             model: elModel.value || '', effort: elEffort.value || '', edit: asEdit, request_id: rid,
+                             images: imgs.map(function(a){ return { media_type: a.media_type, data: a.data }; }) }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function(r){
+      if (!r.ok) return r.json().then(function(j){ throw new Error(j.detail || ('HTTP ' + r.status)); });
+      var reader = r.body.getReader(), dec = new TextDecoder(), buf = '';
+      function pump(){
+        return reader.read().then(function(x){
+          if (x.done) {
+            if (stopping) settleStop();             // 마무리 이벤트 없이 닫혀도 다음 질문이 기다리지 않게
+            else if (!finished) onEvent({type: 'error', message: '응답이 중간에 끊겼습니다.'});
+            return;
+          }
+          buf += dec.decode(x.value, {stream: true});
+          var parts = buf.split('\n\n'); buf = parts.pop();
+          parts.forEach(function(part){
+            var line = part.split('\n').filter(function(l){ return l.indexOf('data: ') === 0; }).map(function(l){ return l.slice(6); }).join('');
+            if (line) onEvent(JSON.parse(line));
+          });
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function(err){
+      if (stopping) settleStop();
+      if (finished) return;
+      onEvent({type: 'error', message: (err.message || err) + (err instanceof TypeError ? ' — 챗봇 서버가 실행 중인지 확인하세요.' : '')});
+    });
+    }
+  }
+
+  function open(anchor){
+    if (anchor) state.anchor = anchor;
+    renderAnchor();
+    if (!elLog.children.length) elLog.innerHTML = EMPTY;
+    box.classList.add('open');
+    restorePos();
+    loadHist();
+    input.focus();
+  }
+  // 대화 끝: 이력 버튼은 서버에 남고, 다음 질문은 새 버튼으로 시작한다
+  function endConversation(){
+    state.summary = ''; state.history = []; state.convId = null; state.firstQ = ''; state.firstSection = '';
+    state.pendingStop = null;     // 멈춘 앞 대화의 마무리는 새 대화와 무관하다(도착해도 convId 가 달라 반영하지 않음)
+    elLog.innerHTML = EMPTY; renderHist();
+  }
+  function close(){ endConversation(); box.classList.remove('open'); setActive(null); }
+
+  box.querySelector('.x').onclick = close;
+  // [새 대화]·Ctrl+N: 답을 만드는 중이면 먼저 멈춘다(멈춘 턴은 서버가 앞 대화에 저장). 입력 중인 글은 그대로 둔다
+  function newConversation(){
+    if (state.running) state.running.stop();
+    endConversation(); input.focus();
+  }
+  box.querySelector('.reset').onclick = newConversation;
+
+  // ---------- 대화 이력 (서버 conversations/*.json) ----------
+  var hist = [];
+  function newId(){
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return (Date.now().toString(16) + Math.random().toString(16).slice(2) + '00000000').slice(0, 32);
+  }
+  function when(t){
+    var d = new Date(t), p = function(n){ return (n < 10 ? '0' : '') + n; };
+    return p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function loadHist(){
+    if (location.protocol === 'file:') return renderHist();
+    fetch('/api/conversations?book=' + BOOK_ID).then(function(r){ return r.ok ? r.json() : []; })
+      .then(function(j){ hist = j; renderHist(); markBlocks(); }, function(){ renderHist(); });
+  }
+  // 목록에는 지금 선택한 블록(앵커)에서 나눈 대화만 보인다. 진행 중인 대화는 블록과 상관없이 보인다
+  function renderHist(){
+    var live = state.convId, a = state.anchor, key = a && a.target ? spotKey(a.section_id, a.target) : null;
+    var items = hist.filter(function(c){
+      return c.id === live || !key || (c.spots || []).some(function(s){ return spotKey(s.section_id, s.target) === key; });
+    });
+    if (live && !items.some(function(c){ return c.id === live; }))      // 첫 답변이 저장되기 전에도 버튼을 보인다
+      items.unshift({ id: live, title: state.firstQ, section_title: state.firstSection, updated: Date.now(), turns: 0 });
+    if (!items.length) { elHist.innerHTML = '<div class="ch-hist-empty">이 블록에서 나눈 대화가 없습니다. 질문하면 여기에 버튼이 생기고, 창을 닫기 전까지는 같은 버튼에 이어집니다.</div>'; return; }
+    elHist.innerHTML = items.map(function(c){
+      var isLive = c.id === live;
+      return '<button type="button" class="ch-hist-item' + (isLive ? ' cur' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.title) + '">' +
+        '<div class="q">' + (isLive ? '<span class="live">진행 중</span>' : '') + esc(c.title) + '</div>' +
+        '<div class="m">' + esc(c.section_title || '위치 없음') + ' · ' + when(c.updated) + (c.turns ? ' · ' + c.turns + '문답' : '') + '</div></button>';
+    }).join('');
+  }
+  elHist.addEventListener('click', function(e){
+    var b = e.target.closest('.ch-hist-item'); if (!b || b.dataset.id === state.convId) return;
+    if (state.busy) { b.title = '답변을 받는 중에는 다른 대화로 바꿀 수 없습니다'; return; }
+    resume(b.dataset.id);
+  });
+  // 카드 우클릭 → 삭제 메뉴. 서버의 이력 파일만 지운다(비용 기록은 남김)
+  var histMenu = document.createElement('div');
+  histMenu.id = 'histMenu'; histMenu.setAttribute('role', 'menu');
+  histMenu.innerHTML = '<button type="button" role="menuitem" class="del">🗑 대화 삭제</button>';
+  document.body.appendChild(histMenu);
+  var menuId = null, delBtn = histMenu.querySelector('.del');
+  function hideHistMenu(){ histMenu.style.display = 'none'; menuId = null; }
+  elHist.addEventListener('contextmenu', function(e){
+    var b = e.target.closest('.ch-hist-item'); if (!b) return;
+    e.preventDefault();
+    menuId = b.dataset.id;
+    var busyHere = state.busy && menuId === state.convId;
+    delBtn.disabled = busyHere; delBtn.textContent = busyHere ? '답변을 받는 중에는 삭제할 수 없습니다' : '🗑 대화 삭제';
+    histMenu.style.display = 'block';
+    var mw = histMenu.offsetWidth, mh = histMenu.offsetHeight;
+    histMenu.style.left = Math.min(e.clientX, innerWidth - mw - 8) + 'px';
+    histMenu.style.top = Math.min(e.clientY, innerHeight - mh - 8) + 'px';
+  });
+  addEventListener('pointerdown', function(e){ if (!histMenu.contains(e.target)) hideHistMenu(); }, true);
+  addEventListener('scroll', hideHistMenu, true);
+  delBtn.onclick = function(){
+    var id = menuId, c = hist.filter(function(x){ return x.id === id; })[0];
+    hideHistMenu();
+    if (!id) return;
+    var title = c ? c.title : state.firstQ;
+    BookDialog.confirm({ title: '대화 삭제', message: '"' + (title || '').slice(0, 40) + '"\n\n이 대화를 삭제할까요? 되돌릴 수 없습니다.',
+                         ok: '삭제', danger: true }).then(function(yes){ if (yes) remove(id); });
+  };
+  function remove(id){
+    var fail = function(msg){ BookDialog.alert({ title: '삭제하지 못했습니다', message: msg }); };
+    var drop = function(){
+      if (state.convId === id) endConversation();       // 진행 중인 대화였으면 새 대화 상태로
+      hist = hist.filter(function(x){ return x.id !== id; });
+      renderHist(); markBlocks();
+    };
+    fetch('/api/conversations/' + encodeURIComponent(id) + '?book=' + BOOK_ID, { method: 'DELETE' }).then(function(r){
+      if (r.ok || r.status === 404) drop();                // 404: 첫 답변 전이라 아직 저장되지 않은 대화
+      else r.json().then(function(j){ fail(j.detail || ('HTTP ' + r.status)); }, function(){ fail('HTTP ' + r.status); });
+    }, function(){ fail('챗봇 서버가 실행 중인지 확인하세요.'); });
+  }
+
+  // 지난 대화를 불러와 이어 간다. 이후 질문은 같은 이력에 쌓이고, 모델에는 저장된 문답을 대화 기록으로 넘긴다
+  function resume(id){
+    endConversation();
+    state.convId = id; renderHist();
+    state.busy = true; sendBtn.disabled = true;          // 불러오는 동안 전송 금지
+    var loaded = function(){ state.busy = false; sendBtn.disabled = false; };
+    elLog.innerHTML = '<div class="ch-empty">불러오는 중…</div>';
+    fetch('/api/conversations/' + encodeURIComponent(id) + '?book=' + BOOK_ID).then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+    }).then(function(c){
+      loaded();
+      if (state.convId !== id) return;
+      state.firstQ = c.turns[0].question; state.firstSection = c.turns[0].section_title;
+      state.history = [];
+      elLog.innerHTML = '<div class="ch-note">' + when(c.created) + '에 시작한 대화를 이어 갑니다. 새로 질문하면 이 대화에 이어서 저장됩니다.</div>';
+      c.turns.forEach(function(t){
+        var whole = t.scope === 'section';
+        state.history.push({ role: 'user', content: (t.section_title ? '(' + t.section_title + (whole ? ' 절 전체에 대해 질문) ' : '에서 질문) ') : '') + t.question },
+                           { role: 'assistant', content: t.stopped ? (t.answer || '(답변 전)') + '\n(사용자가 답변 도중 중지함)' : t.answer });
+        var u = document.createElement('div'); u.className = 'ch-msg user';
+        u.innerHTML = (t.section_title ? '<div class="where">📍 ' + esc(t.section_title) + (whole ? ' · 절 전체' : '') + '</div>' : '') + imgsHtml(t.images || []) +
+          (t.edit_mode ?'<span class="ch-tag" title="책 수정 모드에서 보낸 요청">✏️ 수정</span>' : '') + esc(t.question);
+        var b = document.createElement('div'); b.className = 'ch-msg bot';
+        var a = document.createElement('div'); a.className = 'ch-answer'; a.innerHTML = md(t.answer);
+        if (t.answer) addCopy(b, t.answer);
+        b.appendChild(a);
+        if (t.stopped) b.insertAdjacentHTML('beforeend', '<div class="ch-stopped">⏹ 중지함</div>');
+        var web = t.web || [];
+        b.insertAdjacentHTML('beforeend', '<details><summary>탐색 기록 — ' + srcLabel(t.reads.length, web.length) +
+          (t.cost != null ? ' · ' + BookUsage.usd(t.cost) : '') + '</summary><ol class="ch-trace">' +
+          t.reads.map(function(p){ return '<li>' + (/^v[12] 소스/.test(p) ? '🧩' : '📖') + ' <code>' + esc(p) + '</code></li>'; }).join('') +
+          web.map(function(w){ return '<li class="web">' + webLine(w) + '</li>'; }).join('') +
+          (t.edits || []).map(function(e){ return '<li>✏️ <code>' + esc(e.file) + '</code> <a href="#' + esc(e.section) + '">#' + esc(e.section) + '</a> 수정</li>'; }).join('') +
+          '<li>🤖 ' + esc(t.model || '') + ' · 모델 호출 ' + t.calls + '회 · ' + when(t.t) + '</li></ol></details>');
+        elLog.appendChild(u); elLog.appendChild(b);
+        enhance(a, true);
+      });
+      elLog.scrollTop = elLog.scrollHeight;
+      input.focus();
+    }).catch(function(err){
+      loaded();
+      if (state.convId === id) elLog.innerHTML = '<div class="ch-msg err">이력을 불러오지 못했습니다: ' + esc(err.message || err) + '</div>';
+    });
+  }
+  // ---------- 대화한 블록에 💬 표시 ----------
+  // 이력의 각 질문에 저장된 (절 id, 블록 본문 앞부분)을 지금 보이는 장의 블록과 맞춰 본다
+  var marks = [];
+  function norm(t){ return String(t || '').replace(/\s+/g, ' ').trim().slice(0, 60); }   // 앞 60자: 책을 조금 고쳐도 표시가 유지되게
+  function spotKey(sectionId, target){ return sectionId + '|' + norm(target); }
+  function markBlocks(){
+    marks.forEach(function(m){ m.btn.remove(); }); marks = [];
+    var ch = content.querySelector('section.chapter.show'); if (!ch) return;
+    var bySpot = {};
+    hist.forEach(function(c){
+      (c.spots || []).forEach(function(s){
+        var k = spotKey(s.section_id, s.target);
+        (bySpot[k] = bySpot[k] || []).push(c);          // hist 는 최근 대화가 앞
+      });
+    });
+    if (!Object.keys(bySpot).length) return;
+    ch.querySelectorAll('*').forEach(function(el){
+      var key, head = isHead(el);
+      if (head) key = spotKey(el.id, secTarget(el));
+      else if (isBlock(el) && !el.classList.contains('cap')) { var sec = secOf(el); key = spotKey(sec ? sec.id : ch.id, blockText(el)); }
+      else return;
+      var convs = bySpot[key];
+      if (!convs) return;
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'chat-mark';
+      btn.textContent = '💬' + (convs.length > 1 ? ' ' + convs.length : '');
+      btn.title = (head ? '이 절 전체에 대해 나눈 대화 ' : '이 블록에서 나눈 대화 ') + convs.length + '건 (클릭하면 가장 최근 대화를 엽니다)\n' +
+        convs.map(function(c){ return '· ' + c.title + ' (' + when(c.updated) + ')'; }).join('\n');
+      btn.onclick = function(){
+        setActive(el); open(collect(el));
+        if (!state.busy && state.convId !== convs[0].id) resume(convs[0].id);
+      };
+      content.appendChild(btn);
+      marks.push({ el: el, btn: btn });
+    });
+    placeMarks();
+  }
+  function placeMarks(){
+    var c = content.getBoundingClientRect();
+    marks.forEach(function(m){
+      var r = m.el.getBoundingClientRect();
+      if (!r.height) { m.btn.style.display = 'none'; return; }
+      m.btn.style.display = 'block';
+      m.btn.style.left = (r.right - c.left + 6) + 'px';
+      m.btn.style.top = (r.top - c.top) + 'px';
+    });
+  }
+  addEventListener('hashchange', function(){ setTimeout(markBlocks, 0); });   // 다른 장이 보이면 다시 맞춘다
+  addEventListener('resize', placeMarks);
+  if (window.ResizeObserver) new ResizeObserver(placeMarks).observe(content); // 다이어그램 렌더 등으로 높이가 바뀔 때
+
+  loadHist();
+  sendBtn.onclick = send;
+  input.addEventListener('keydown', function(e){
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.isComposing) return;
+    e.preventDefault();
+    // Ctrl+Enter(맥은 Cmd+Enter): [✏️ 책 수정]을 켜고 이 요청을 책 수정 요청으로 보낸다.
+    // 고치고 나면 평소처럼 저절로 꺼진다. 보낼 글이 없으면 모드만 켠다
+    if (e.ctrlKey || e.metaKey) {
+      if (state.busy) return;
+      setEditMode(true);
+      if (input.value.trim() || attach.length) send();
+      return;
+    }
+    send();
+  });
+  // Ctrl+N(맥은 Cmd+N): 채팅창이 열려 있으면 새 대화. 한글 입력 중이면 e.key 가 'ㅜ'이므로 물리 키(code)로 본다.
+  // 일반 브라우저 탭에서는 브라우저가 이 키를 '새 창'으로 먼저 가져가 페이지까지 오지 않는다(앱 창에서는 온다)
+  addEventListener('keydown', function(e){
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+    if (e.code !== 'KeyN' && e.key !== 'n' && e.key !== 'N') return;
+    if (!box.classList.contains('open') || document.getElementById('bookDialog').classList.contains('open')) return;
+    e.preventDefault();
+    hideHistMenu();
+    newConversation();
+  });
+  addEventListener('keydown', function(e){
+    if (e.key !== 'Escape' || e.isComposing) return;
+    if (histMenu.style.display === 'block') { hideHistMenu(); return; }
+    if (state.running && box.classList.contains('open')) { e.preventDefault(); state.running.stop(); return; }   // 답을 만드는 중이면 창을 닫지 않고 멈춘다
+    if (box.classList.contains('open')) close();
+  });
+
+  // 제목줄 드래그 (참조 책 #ndBox 패턴)
+  var head = box.querySelector('.ch-head'), drag = null;
+  head.addEventListener('pointerdown', function(e){
+    if (e.button !== 0 || e.target.closest('button, select')) return;
+    var r = box.getBoundingClientRect();
+    box.style.left = r.left + 'px'; box.style.top = r.top + 'px'; box.style.right = 'auto'; box.style.bottom = 'auto';
+    drag = { id: e.pointerId, x: e.clientX - r.left, y: e.clientY - r.top };
+    box.classList.add('dragging'); e.preventDefault();
+  });
+  addEventListener('pointermove', function(e){
+    if (!drag || e.pointerId !== drag.id) return;
+    var r = box.getBoundingClientRect(), edge = 8;
+    place(e.clientX - drag.x, e.clientY - drag.y);
+  });
+  function endDrag(e){ if (drag && e.pointerId === drag.id) { drag = null; box.classList.remove('dragging'); savePos(); } }
+
+  // 옮긴 위치를 기억해 다음에 열 때(새로고침 후에도) 그 자리에 연다. 창이 줄어 화면을 벗어나면 안쪽으로 당긴다
+  var POS_KEY = 'bookChat.pos';
+  function place(left, top){
+    var r = box.getBoundingClientRect(), edge = 8, W = document.documentElement.clientWidth;   // 세로 스크롤바 제외
+    box.style.left = Math.max(edge, Math.min(left, W - r.width - edge)) + 'px';
+    box.style.top = Math.max(edge, Math.min(top, innerHeight - r.height - edge)) + 'px';
+    box.style.right = 'auto'; box.style.bottom = 'auto';
+  }
+  function savePos(){
+    try { localStorage.setItem(POS_KEY, JSON.stringify({ left: parseFloat(box.style.left), top: parseFloat(box.style.top) })); } catch (e) {}
+  }
+  function restorePos(){
+    var p = null;
+    try { p = JSON.parse(localStorage.getItem(POS_KEY)); } catch (e) {}
+    if (p && isFinite(p.left) && isFinite(p.top)) place(p.left, p.top);
+  }
+  addEventListener('pointerup', endDrag); addEventListener('pointercancel', endDrag);
+})();
+</script>
+<script>
+// 토큰 사용량·비용 — 서버의 누적 기록(/api/usage, 재기동해도 유지)을 모델별로 합산한다.
+// 챗봇 창 제목줄에 누적 비용 버튼을 두고, 누르면 창 안에 상세 패널(입력·출력·모델별 차트·표)을 펼친다.
+// window.BookUsage.add(record) · reload() · usd(v) · tok(n)
+(function(){
+  var log = [], loadErr = '';
+
+  var fmtTok = function(n){ return (n || 0).toLocaleString('ko-KR'); };
+  var fmtUsd = function(v){
+    if (v == null) return '—';
+    return '$' + (v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(4) : v.toFixed(5));
+  };
+  var esc = function(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+
+  // 기록을 모델별로 합산. 단가를 모르는 기록이 하나라도 있으면 그 모델의 비용은 null
+  function byModel(){
+    var map = {}, order = [];
+    log.forEach(function(r){
+      var k = r.model || '(모델 미기록)', g = map[k];
+      if (!g) { g = map[k] = { model: k, q: 0, calls: 0, pt: 0, ct: 0, ic: 0, oc: 0, ok: true, last: 0 }; order.push(g); }
+      g.q++; g.calls += r.calls || 0; g.pt += r.pt || 0; g.ct += r.ct || 0; g.last = Math.max(g.last, r.t || 0);
+      if (r.ic == null || r.oc == null) g.ok = false; else { g.ic += r.ic; g.oc += r.oc; }
+    });
+    order.forEach(function(g){ if (!g.ok) { g.ic = g.oc = null; } g.cost = g.ok ? g.ic + g.oc : null; });
+    return order.sort(function(a, b){ return b.last - a.last; });   // 최근에 쓴 모델이 위
+  }
+
+  var panel = document.createElement('div');
+  panel.id = 'usagePanel';
+  panel.setAttribute('role', 'region'); panel.setAttribute('aria-label', '챗봇 토큰 사용량과 비용');
+  panel.innerHTML =
+    '<div class="up-head"><span class="up-title">토큰 사용량 · 비용</span>' +
+    '<button type="button" class="reset" title="서버에 쌓인 누적 기록을 지웁니다">초기화</button>' +
+    '<button type="button" class="fold" title="닫기">×</button></div>' +
+    '<div class="up-body"></div>';
+  var tip = document.createElement('div'); tip.id = 'usageTip'; document.body.appendChild(tip);
+  var body = panel.querySelector('.up-body');
+
+  // 챗봇 창 제목줄의 비용 버튼 → 창 안 드롭다운. 책 본문 오른쪽 공간을 차지하지 않는다
+  var costBtn = document.createElement('button');
+  costBtn.type = 'button'; costBtn.className = 'ch-cost'; costBtn.setAttribute('aria-expanded', 'false');
+  costBtn.title = '누적 토큰 사용량·비용 — 클릭하면 자세히 봅니다';
+  var chat = document.getElementById('chatBox');
+  if (chat) { chat.querySelector('.ch-head .reset').before(costBtn); chat.appendChild(panel); }
+  function show(on){
+    panel.classList.toggle('open', on); costBtn.setAttribute('aria-expanded', String(on));
+    if (!on) tip.style.display = 'none';
+  }
+  costBtn.onclick = function(){ show(!panel.classList.contains('open')); };
+  panel.querySelector('.fold').onclick = function(){ show(false); costBtn.focus(); };
+  document.addEventListener('pointerdown', function(e){
+    if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== costBtn) show(false);
+  });
+  addEventListener('keydown', function(e){             // Esc는 챗봇 창보다 먼저 이 패널을 닫는다
+    if (e.key === 'Escape' && panel.classList.contains('open')) { e.preventDefault(); e.stopImmediatePropagation(); show(false); costBtn.focus(); }
+  }, true);
+  panel.querySelector('.reset').onclick = function(){
+    BookDialog.confirm({ title: '사용량 기록 초기화', message: '모든 모델의 누적 사용량 기록을 지울까요?\n되돌릴 수 없습니다.', ok: '초기화', danger: true })
+      .then(function(yes){ if (yes) fetch('/api/usage?book=' + BOOK_ID, { method: 'DELETE' }).then(function(){ log = []; render(); }); });
+  };
+
+  // 모델별 비용 가로 누적 막대 (입력 왼쪽, 출력 오른쪽). 모델 이름은 막대 위, 합계는 오른쪽 끝
+  function chart(groups){
+    var W = 260, L = 2, R = 52, rowH = 30, barH = 10, pw = W - L - R, H = groups.length * rowH + 2;
+    var max = Math.max.apply(null, groups.map(function(g){ return g.cost || 0; }).concat([1e-9]));
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="모델별 비용 막대 차트">';
+    groups.forEach(function(g, i){
+      var y0 = i * rowH, by = y0 + 14, wIn = (g.ic || 0) / max * pw, wOut = (g.oc || 0) / max * pw, gap = wIn > 0 && wOut > 0 ? 2 : 0;
+      svg += '<text x="' + L + '" y="' + (y0 + 10) + '" style="fill:var(--text-secondary);font-size:9px">' + esc(g.model) + '</text>';
+      svg += '<rect x="' + L + '" y="' + by + '" width="' + pw + '" height="' + barH + '" fill="var(--grid)"/>';
+      if (wIn > 0) svg += '<rect x="' + L + '" y="' + by + '" width="' + wIn + '" height="' + barH + '" fill="var(--series-1)"/>';
+      if (wOut > 0) svg += '<rect x="' + (L + wIn + gap) + '" y="' + by + '" width="' + Math.max(0, wOut - gap) + '" height="' + barH + '" rx="2" fill="var(--series-2)"/>';
+      svg += '<text x="' + (W - 2) + '" y="' + (by + 8.5) + '" text-anchor="end" style="fill:var(--text-primary);font-weight:700">' + fmtUsd(g.cost) + '</text>';
+      svg += '<rect class="hit" data-i="' + i + '" x="0" y="' + y0 + '" width="' + W + '" height="' + rowH + '" fill="transparent"/>';
+    });
+    return svg + '</svg>';
+  }
+
+  // 표 한 줄: 입력·출력 칸은 토큰 아래에 비용, 마지막 칸이 입력+출력 합계
+  function row(name, q, t1, c1, t2, c2, cost){
+    return '<tr><td>' + name + '</td><td>' + q + '</td><td>' + fmtTok(t1) + '<div class="c">' + fmtUsd(c1) + '</div></td><td>' +
+           fmtTok(t2) + '<div class="c">' + fmtUsd(c2) + '</div></td><td><b>' + fmtUsd(cost) + '</b></td></tr>';
+  }
+
+  function render(){
+    var groups = byModel(), ok = groups.length && groups.every(function(g){ return g.ok; });
+    var pt = 0, ct = 0, ic = 0, oc = 0, calls = 0;
+    groups.forEach(function(g){ pt += g.pt; ct += g.ct; ic += g.ic || 0; oc += g.oc || 0; calls += g.calls; });
+    var total = ok ? ic + oc : null;
+    costBtn.textContent = '💰 ' + (loadErr ? '—' : log.length ? fmtUsd(total) : '$0');
+    if (loadErr) { body.innerHTML = '<div class="up-empty">' + esc(loadErr) + '</div>'; return; }
+    if (!log.length) { body.innerHTML = '<div class="up-empty">아직 질문이 없습니다. 본문 블록을 클릭해 질문하면 여기에 쌓입니다.</div>'; return; }
+    body.innerHTML =
+      '<div class="up-summary">' +
+      '<div class="up-hero"><span class="v">' + fmtUsd(total) + '</span><span class="s">누적 비용 (입력+출력)</span></div>' +
+      '<div class="up-sub">모델 ' + groups.length + '개 · 질문 ' + log.length + '회 · 모델 호출 ' + calls + '회 · ' + fmtTok(pt + ct) + ' 토큰' +
+        (ok ? '' : ' · 일부 단가 정보 없음') + '</div></div>' +
+      '<div class="up-more">' +
+      '<div class="up-tiles">' +
+        '<div class="up-tile"><div class="k"><span class="sw" style="background:var(--series-1)"></span>입력</div>' +
+          '<div class="t">' + fmtTok(pt) + ' 토큰</div><div class="c">' + fmtUsd(ok ? ic : null) + '</div></div>' +
+        '<div class="up-tile"><div class="k"><span class="sw" style="background:var(--series-2)"></span>출력</div>' +
+          '<div class="t">' + fmtTok(ct) + ' 토큰</div><div class="c">' + fmtUsd(ok ? oc : null) + '</div></div>' +
+      '</div>' +
+      '<div class="up-chart-title">모델별 비용</div>' + chart(groups) +
+      '<details><summary>표로 보기</summary><div class="up-table-wrap"><table>' +
+        '<tr><th>모델</th><th>질문</th><th>입력</th><th>출력</th><th>합계 $</th></tr>' +
+        groups.map(function(g){ return row(esc(g.model), g.q, g.pt, g.ic, g.ct, g.oc, g.cost); }).join('') +
+        (groups.length > 1 ? row('<b>합계</b>', log.length, pt, ok ? ic : null, ct, ok ? oc : null, total) : '') +
+        '</table></div></details></div>';
+
+    body.querySelectorAll('rect.hit').forEach(function(h){
+      h.addEventListener('mousemove', function(e){
+        var g = groups[+h.dataset.i];
+        tip.innerHTML = '<div class="q">' + esc(g.model) + ' · 질문 ' + g.q + '회</div>' +
+          '<div class="row"><span class="sw" style="background:#2a78d6"></span>입력 ' + fmtTok(g.pt) + ' 토큰<span>' + fmtUsd(g.ic) + '</span></div>' +
+          '<div class="row"><span class="sw" style="background:#eb6834"></span>출력 ' + fmtTok(g.ct) + ' 토큰<span>' + fmtUsd(g.oc) + '</span></div>' +
+          '<div class="row"><b>합계</b> · 호출 ' + g.calls + '회<span><b>' + fmtUsd(g.cost) + '</b></span></div>';
+        tip.style.display = 'block';
+        var tw = tip.offsetWidth;
+        tip.style.left = Math.max(8, Math.min(e.clientX - tw / 2, innerWidth - tw - 8)) + 'px';
+        tip.style.top = (e.clientY + 14) + 'px';
+      });
+      h.addEventListener('mouseleave', function(){ tip.style.display = 'none'; });
+    });
+  }
+
+  function reload(){
+    if (location.protocol === 'file:') { loadErr = '누적 기록은 챗봇 서버에서 열어야 보입니다.'; render(); return; }
+    fetch('/api/usage?book=' + BOOK_ID).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(j){ log = j; loadErr = ''; render(); })
+      .catch(function(){ loadErr = '누적 기록을 불러오지 못했습니다 — 챗봇 서버가 실행 중인지 확인하세요.'; render(); });
+  }
+
+  window.BookUsage = {
+    add: function(rec){ if (rec) { log.push(rec); render(); } else reload(); },
+    reload: reload, usd: fmtUsd, tok: fmtTok
+  };
+  reload();
+})();
+</script>

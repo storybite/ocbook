@@ -5,6 +5,7 @@
 
 __pycache__/
 *.pyc
+*.egg-info/
 
 # 비밀값 (FIRECRAWL_API_KEY 등)
 .env

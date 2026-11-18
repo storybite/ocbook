@@ -1,6 +1,6 @@
-# 『OpenCode V2 해부』 — 책 챗봇 엔진(D:\workspace\cc\bookbot) 설정
+# 『OpenCode V2 해부』 — 책 챗봇 엔진(저장소 루트의 bookbot/) 설정
 # 실행: python -m bookbot serve   (이 폴더에서. 다른 곳이면 폴더 경로를 인자로)
-# 원고 형식·각 키의 뜻은 엔진의 FORMAT.md·README.md 를 보세요.
+# 원고 형식·각 키의 뜻은 저장소 루트의 FORMAT.md·README.md 를 보세요.
 
 id = "oc2"
 title = "OpenCode V2 해부"
