@@ -1,0 +1,231 @@
+<section class="chapter" id="ch02">
+<h1><span class="num">2장</span> 1.x에서 2.x로 — 무엇이, 왜 바뀌었나</h1>
+<p class="lead">ChatGPT 답변은 "2.x는 1.x에 기능을 더한 것이 아니라 엔진·세션·서버 API·플러그인을 재설계한 버전"이라고 했습니다. 이 장은 V1 소스(1.19.5)와 V2 소스(2.3.0)를 나란히 놓고 그 말이 정확히 무엇을 뜻하는지 확인합니다.</p>
+
+<h2 id="ch02-1">2.1 하룻밤의 재작성이 아니었다</h2>
+<p>겉으로 드러난 차이부터 말하면, V1이 터미널마다 서버를 따로 띄워 작업했다면 V2는 여러 화면이 하나의 백그라운드 서버를 공유하고, 작업을 이벤트로 기록해 중단 후 재개하도록 바뀌었습니다. 그러나 이것은 결과입니다. 더 핵심적인 변화는 V1의 <b>메모리 중심 실행 루프</b>를, <b>입력과 진행 상태를 먼저 기록하고 하네스가 실행을 직접 통제하는 구조</b>로 바꾼 것입니다. 공유 백그라운드 서버와 중단 후 복구는 이 설계가 드러나는 대표적인 결과입니다(2.3절 표의 6·8행).</p>
+<p>이 변화는 한 번에 일어나지 않았습니다. V1 저장소의 태그를 따라가면 V2가 1.x 안에서 점진적으로 자라났다는 사실이 보입니다.</p>
+<div class="mermaid">
+%%{init: {"themeVariables": {"fontSize":"16px"}, "flowchart": {"nodeSpacing": 18, "rankSpacing": 22}}}%%
+flowchart TB
+  T0["<b>2025-10</b> · v1.0.0<br/>Hono 서버, JSON 파일 저장, opentui+Solid TUI"]
+  T1["<b>2026-02</b> · SQLite + Drizzle<br/>JSON 저장을 SQLite로 대체"]
+  T2["<b>2026-04</b> · v1.14.30<br/>packages/core, packages/llm 등장"]
+  T3["<b>2026-05</b> · v1.14.45<br/>Hono 제거, Effect HttpApi"]
+  T4["<b>2026-05 이후</b> · v1.15 ~ 1.19.5<br/>V2 세션 코어를 1.x 안에서 함께 운영 (EventV2Bridge)"]
+  T5["<b>2026-09</b> · v2.0.0<br/>분기 — v1은 v1 브랜치에서 유지"]
+  T6["<b>2026-11</b> · v2.3.0<br/>백그라운드 서브에이전트 기본값"]
+  T0 --> T1 --> T2 --> T3 --> T4 --> T5 --> T6
+  style T0 fill:#dbe8f7,stroke:#5a7fae,stroke-width:2px,color:#111111
+  style T1 fill:#dff1e3,stroke:#5f9a6c,stroke-width:2px,color:#111111
+  style T2 fill:#fbecd0,stroke:#b58a3a,stroke-width:2px,color:#111111
+  style T3 fill:#f3dde9,stroke:#a8678a,stroke-width:2px,color:#111111
+  style T4 fill:#e5e0f5,stroke:#7d6fb3,stroke-width:2px,color:#111111
+  style T5 fill:#d8f0ef,stroke:#4f9a95,stroke-width:2px,color:#111111
+  style T6 fill:#f6e3d8,stroke:#b07a5b,stroke-width:2px,color:#111111
+</div>
+<p class="cap">그림 2-1 이행 연표 (V1 저장소 태그 기준)</p>
+<p>그래서 1.19.5는 <b>혼성(hybrid)</b>입니다. 레거시 V1 런타임(<code>packages/opencode/src/session/prompt.ts</code>)과 V2 코어(<code>packages/core/src/session/*</code>)가 같은 프로세스에서 돌았습니다. V1 AGENTS.md는 이미 이렇게 적고 있습니다.</p>
+<pre><code><span class="src">v1/repo/AGENTS.md — V2 Session Core</span>- Keep durable prompt admission separate from model execution.
+- Preserve one explicit `llm.stream(request)` call per provider turn and reload projected history
+  before durable continuation. Do not bridge through legacy `SessionPrompt.loop(...)` or delegate
+  orchestration to an in-memory tool loop.</code></pre>
+<p>이 지침이 앞에서 말한 핵심 변화를 그대로 요약합니다. V1은 큰 루프 안에서 메시지를 읽고 AI SDK에 모델 호출과 도구 실행을 맡겼습니다. 저장 기능은 있었지만, 실행 중 새 입력이 오거나 프로세스가 죽었을 때 처리하는 구조가 한 루프에 얽혀 있었습니다.</p>
+<p>V2는 이를 세 책임으로 나눕니다(<a href="#ch07-1">7.1 세 책임의 분리</a>).</p>
+<ul>
+<li><b>Inbox</b>는 사용자 요청을 실행 전에 디스크에 남깁니다. 지침의 "durable prompt admission"이 이것입니다.</li>
+<li><b>Execution</b>은 세션마다 실행 흐름 하나를 관리하며 시작·중단·복구를 맡습니다.</li>
+<li><b>Runner</b>는 모델 호출과 도구 실행을 진행합니다.</li>
+</ul>
+<p>또한 모델 호출 한 번이 끝나면 도구 결과를 이벤트로 저장하고, 다음 스텝은 저장된 이력을 다시 읽어 시작합니다. 지침에서 "모델 호출(provider turn) 한 번에 <code>llm.stream(request)</code>도 한 번만 부르고, 다음 스텝으로 넘어가기 전에 저장된 이력을 다시 읽는다"고 한 부분이 바로 이 규칙입니다. 따라서 중간 입력을 언제 반영할지, 어디서 다시 실행할지를 하네스가 명시적으로 결정할 수 있습니다. 공유 백그라운드 서버(<a href="#ch04-3">4.3 관리형 백그라운드 서비스</a>)는 이런 실행 구조를 여러 화면에서 이용하게 만드는 변화입니다. 두 루프의 구조 차이는 2.2절의 그림 2-2에서 다시 비교합니다.</p>
+<div class="box why"><b>점진적 이행의 원리</b>
+재작성 프로젝트가 실패하는 흔한 이유는 "새 버전이 완성될 때까지 아무도 쓰지 않는" 데 있습니다. OpenCode는 저장소(SQLite), 런타임(Effect), 서버(HttpApi)를 차례로 바꾸며 매 릴리스를 배포했고, 새 세션 코어를 옛 것 옆에서 실사용으로 검증한 뒤 분기했습니다. V2에 남은 호환 계층(<code>core/src/v1/config</code>, <code>database/v1-migration.bun.ts</code>)은 이 이행의 흔적입니다.</div>
+
+<h2 id="ch02-2">2.2 V1의 에이전트 루프</h2>
+<pre><code><span class="src">v1 packages/opencode/src/session/prompt.ts (요약)</span>while (true) {
+  yield* status.set(sessionID, { type: "busy" })
+  let msgs = yield* MessageV2.filterCompactedEffect(sessionID)
+  const { user: lastUser, assistant: lastAssistant, tasks } = MessageV2.latest(msgs)
+  if (lastAssistant?.finish &amp;&amp; !["tool-calls", "unknown"].includes(lastAssistant.finish) ...) break
+  step++
+  if (task?.type === "compaction") { yield* compaction.process({...}); continue }
+  ...
+  yield* handle.process(...)   // AI SDK streamText가 도구 디스패치까지 수행
+}</code></pre>
+<p>같은 일을 V2에서는 세 겹으로 나눠 맡습니다. 바깥 루프 <code>drain</code>은 경계에서 다음 입력을 고르기만 하고, <code>runStep</code>은 스텝 하나의 정책(압축·스텝 한도·재시도)을, <code>SessionStep.attempt</code>는 <code>llm.stream</code> 한 번과 그 안의 도구 실행을 맡습니다.</p>
+<pre><code><span class="src">v2 packages/core/src/session/runner/llm.ts — drain (요약)</span>while (true) {
+  const next = yield* advanceToStep()        // Inbox에서 승격할 입력·제어(move·compaction)를 고르는 경계
+  if (next._tag !== "Ready") return next      // Complete | Moved | Reloaded
+  continuing = yield* runStep(next.context, step, input.interruption)
+  stepped = true; step++; force = false; entering = false
+}</code></pre>
+<pre><code><span class="src">v2 packages/core/src/session/runner/llm.ts — runStep (요약)</span>while (true) {
+  const loaded = initial ?? (yield* prepareContext(sessionID).pipe(Effect.flatMap(context.load)))  // 재시도는 이력을 다시 읽는다
+  const compacted = yield* compaction.compact({ reason: "auto", context: loaded, estimate })
+  if (compacted.status === "completed") { assistantMessageID = SessionMessage.ID.create(); continue }
+  const stepLimitReached = loaded.agent.info.steps !== undefined &amp;&amp; step >= loaded.agent.info.steps
+  const prepared = yield* context.request.primary({ ..., toolChoice: stepLimitReached ? "none" : undefined })
+  const outcome = yield* steps.attempt({ sessionID, assistantMessageID, prepared, retry, ... })
+  // Completed → needsContinuation 반환 | Retry → 대기 후 반복 | OutputLimit | Compacted | RecoverFull
+}</code></pre>
+<pre><code><span class="src">v2 packages/core/src/session/runner/step.ts — attempt (요약)</span>const providerStream = llm.stream(input.prepared.request, input.prepared.options).pipe(   // 스텝당 프로바이더 호출 1회
+  Stream.runForEach((event) => Effect.gen(function* () {
+    yield* publisher.publish(event)                          // 스트림 이벤트를 곧바로 세션 이벤트로 기록
+    if (event.type !== "tool-call" || event.providerExecuted) return
+    toolRuns.push({ call: event, fiber: yield* executeTool(event, cancel).pipe(..., Effect.forkScoped) })   // 도구는 스트림 도중 즉시 실행
+  })),
+)</code></pre>
+<p>차이는 도구 실행의 주인에 있습니다. V1은 AI SDK <code>streamText</code>가 도구 호출과 다음 모델 호출까지 메모리 안에서 이어 갔습니다. V2는 스텝 하나가 <code>llm.stream</code> 한 번으로 끝나고, 도구 결과는 이벤트로 저장됩니다. 계속할지는 <code>needsContinuation</code>을 보고 <code>drain</code>이 판단하며, 다음 스텝은 저장된 이력을 다시 읽어 시작합니다. 자세한 흐름은 <a href="#ch08-2">8.2 drain</a>과 <a href="#ch08-4">8.4 SessionStep.attempt</a>에서 다룹니다.</p>
+<div class="mermaid">
+flowchart LR
+  subgraph V1["V1"]
+    A1["SessionPrompt.loop<br/>메모리 ensureRunning"] --> A2["while(true)<br/>가변 메시지 행"] --> A3["AI SDK streamText<br/>도구 디스패치 포함"]
+  end
+  subgraph V2["V2"]
+    B1["Inbox 영속 접수"] --> B2["Execution<br/>클레임·코디네이터"] --> B3["Runner<br/>스텝 = llm.stream 1회<br/>이력 재로드"]
+  end
+  V1 -. "재설계" .-> V2
+</div>
+<p class="cap">그림 2-2 루프 구조의 변화</p>
+<p>그림 2-2의 V2 쪽을 확대해 위 세 코드 조각의 호출 관계와 각 루프가 도는 범위로 그리면 그림 2-3과 같습니다.</p>
+<div class="mermaid">
+flowchart TD
+  INBOX["SessionInbox<br/>DB: session_inbox<br/>아직 전달되지 않은 입력·제어 항목"]
+  START(["drain 시작"]) --> ADV
+  INBOX -. "대기 항목 읽기" .-> ADV
+  subgraph L1["루프 ① drain"]
+    ADV["advanceToStep<br/>Inbox 읽기·입력 승격·제어 선택"]
+    INC["needsContinuation 반환 → step++"]
+    subgraph L2["루프 ② runStep"]
+      LOAD["prepareContext → context.load<br/>저장된 이력 다시 읽기"]
+      CMP["compaction.compact"]
+      REQ["context.request.primary"]
+      OUT{"attempt 결과"}
+      subgraph L3["반복 ③ attempt"]
+        LLM["llm.stream 1회"]
+        EV["스트림 이벤트 수신"]
+        PUB["publisher.publish"]
+        TOOL["executeTool 포크"]
+      end
+    end
+  end
+  ADV -- "Ready" --> LOAD
+  LOAD --> CMP
+  CMP -- "압축 완료" --> LOAD
+  CMP -- "압축 불필요" --> REQ
+  REQ -- "steps.attempt" --> LLM
+  LLM --> EV
+  EV -- "이벤트" --> PUB
+  PUB -- "다음 이벤트" --> EV
+  PUB -- "tool-call" --> TOOL
+  EV -- "스트림 끝" --> OUT
+  OUT -- "Retry 등" --> LOAD
+  OUT -- "Completed" --> INC
+  INC --> ADV
+  ADV -- "Ready 아님" --> END(["Complete / Moved / Reloaded 반환"])
+</div>
+<p class="cap">그림 2-3 V2 에이전트 루프의 호출 흐름과 루프 범위</p>
+<p>바깥의 <code>drain</code>은 “다음 할 일이 있나?”를 확인하고, 있으면 한 단계씩 실행하는 반복입니다. 그 안의 <code>runStep</code>은 한 단계를 처리하며, 대화 압축이나 재시도가 필요하면 기록을 다시 읽고 그 단계를 다시 시도합니다. 맨 안의 <code>attempt</code>는 모델을 한 번 호출한 뒤, 흘러오는 답변 조각을 기록하고 도구 사용 요청을 실행하는 과정입니다. 모델을 다시 호출할 때는 매번 <b>저장된 대화 기록을 다시 읽어</b> 이어갑니다.</p>
+
+<h2 id="ch02-3">2.3 19개 차원 비교</h2>
+<table>
+<tr><th>#</th><th>차원</th><th>V1 (1.0 → 1.19.5)</th><th>V2 (2.3.0)</th></tr>
+<tr><td>1</td><td>주 패키지</td><td><code>packages/opencode</code> 단일체(후반에 core/llm/server 추가)</td><td>core, cli, server, protocol, schema, ai, codemode, plugin, tui, desktop</td></tr>
+<tr><td>2</td><td>Effect</td><td>1.0엔 없음(zod, 네임스페이스), 점진 도입</td><td>전면 사용, 린트로 강제</td></tr>
+<tr><td>3</td><td>에이전트 루프</td><td><code>while(true)</code> + AI SDK가 도구 디스패치</td><td>Inbox → Execution → Runner, 스텝마다 이력 재로드</td></tr>
+<tr><td>4</td><td>동시성</td><td>메모리 <code>ensureRunning</code></td><td>RunCoordinator, steer/queue</td></tr>
+<tr><td>5</td><td>저장</td><td>JSON 파일 → SQLite 가변 행</td><td>SQLite 이벤트 로그 + 투영</td></tr>
+<tr><td>6</td><td>크래시 복구</td><td>고아 도구 휴리스틱</td><td>쓰기 선행 클레임, 부팅 시 재개</td></tr>
+<tr><td>7</td><td>서버</td><td>Hono → HttpApi, 평면 <code>/session/...</code></td><td>Protocol 정의 HttpApi, <code>/api/session/:id/...</code>, 공유 SSE 피드</td></tr>
+<tr><td>8</td><td>프로세스 모델</td><td>TUI마다 Bun Worker 내장 서버</td><td>공유 백그라운드 <code>opencode service</code></td></tr>
+<tr><td>9</td><td>TUI</td><td>Go Bubble Tea(0.x) → opentui+Solid, 계층 <code>tui.json</code></td><td>opentui+Solid, 전역 <code>cli.json</code> 하나</td></tr>
+<tr><td>10</td><td>LLM 계층</td><td>Vercel AI SDK 기본</td><td><code>@opencode/ai</code>, AI SDK는 <code>aisdk:</code> 어댑터</td></tr>
+<tr><td>11</td><td>도구</td><td>bash, task, apply_patch, lsp, todowrite…; Code Mode는 MCP 전용</td><td>shell, subagent, patch, question, execute(전체 카탈로그), opencode.*</td></tr>
+<tr><td>12</td><td>권한</td><td>도구별 맵 + <code>tools</code> 불리언, external_directory는 ask</td><td>순서 있는 <code>permissions</code> 배열, external_directory 기본 allow, <code>policies</code></td></tr>
+<tr><td>13</td><td>에이전트</td><td><code>agent</code>/<code>mode</code> 맵, prompt, maxSteps, temperature</td><td><code>agents</code>, system, steps, model#variant</td></tr>
+<tr><td>14</td><td>서브에이전트</td><td><code>task</code>, 차단형(후반 opt-in background)</td><td><code>subagent</code>, 항상 백그라운드, 유휴 시 보고</td></tr>
+<tr><td>15</td><td>플러그인</td><td>훅 객체를 반환하는 함수</td><td><code>Plugin.define</code>, 도메인 변환, server/TUI/GUI/RPC</td></tr>
+<tr><td>16</td><td>압축</td><td>요약 + 도구 출력 가지치기(PRUNE_PROTECT 40k)</td><td>체크포인트 요약 + 최근 15k, 에포크</td></tr>
+<tr><td>17</td><td>지침</td><td>AGENTS.md, CLAUDE.md 폴백, CONTEXT.md; 매 스텝 재구성</td><td>AGENTS.md만, 해시 값 델타, 캐시 안정 베이스라인</td></tr>
+<tr><td>18</td><td>스냅숏</td><td>프로젝트별 그림자 Git</td><td>같은 아이디어, 패킹·동시 캡처로 강화</td></tr>
+<tr><td>19</td><td>LSP / 공유</td><td>LSP 도구, 세션 공유(opncd.ai)</td><td>LSP 미실행, 공유 은퇴</td></tr>
+</table>
+<div class="box note"><b>6행의 "고아 도구 휴리스틱"이란</b>
+<p><b>휴리스틱</b>은 확실한 근거 대신 상황을 보고 그럴듯하게 추정하는 경험칙입니다. "아마 이럴 것이다"라고 보고 처리하는 방식이지요.</p>
+<p><b>고아 도구</b>는 짝을 잃은 도구 호출입니다. 에이전트가 도구(셸, 파일 수정 등)를 부르면 대화 기록에 "도구 호출"이 남고, 끝나면 "도구 결과"가 짝으로 붙습니다. 그런데 도구가 도는 중에 노트북이 꺼지면 <b>호출만 있고 결과가 없는</b> 기록이 남습니다.</p>
+<table>
+<tr><th></th><th>V1: 휴리스틱</th><th>V2: 클레임(기록)</th></tr>
+<tr><td>남아 있는 근거</td><td>"결과 없는 도구 호출"이라는 <b>상태</b>뿐</td><td><b>실행(턴)을 시작할 때</b> 세션에 써 두는 클레임("이 세션의 턴이 진행 중"). 도구마다가 아니라 실행마다 하나</td></tr>
+<tr><td>다음 실행 때 판단</td><td>"결과가 없으니 아마 중간에 죽었겠지" 하고 <b>추정</b>해서 정리</td><td>클레임이 남아 있으면 그 턴이 <b>확실히</b> 중단된 것으로 보고, 결과 없이 남은 도구 호출을 실패 처리</td></tr>
+<tr><td>이어서 하기</td><td>정리로 끝남. 자동으로 이어 가지 않음</td><td>"서버가 재시작되었습니다… 이미 끝낸 일은 반복하지 말고 이어서 하라"는 메시지를 넣고 턴을 자동 재개(턴당 최대 10회, <a href="#ch07-6">7.6절</a>, 8장)</td></tr>
+</table>
+<p>V1은 실행 상태를 메모리(<code>ensureRunning</code>)에만 들고 있어서 프로세스가 죽으면 "무엇이 진행 중이었는지"도 함께 사라졌습니다. 남은 흔적을 보고 짐작할 수밖에 없었고, 그것이 휴리스틱입니다. V2는 실행을 시작할 때 기록부터 남기므로(쓰기 선행) 짐작할 필요가 없습니다.</p>
+<p><b>사용자 입장에서는</b> 이렇게 다릅니다. V1에서는 리팩터링 도중 노트북이 꺼지면, 다시 열었을 때 그 작업이 실패로 정리된 채 멈춰 있었습니다. V2에서는 다음에 서비스가 뜰 때 에이전트가 스스로 "중단됐었다"는 사실을 알고 이어서 작업합니다.</p>
+</div>
+<p>표의 차이는 실제 사용에서 어떻게 느껴질까요? V2의 장점은 대부분 <b>작업을 디스크에 먼저 기록하고, 여러 화면이 하나의 서버를 함께 쓰는 구조</b>에서 나옵니다. 에이전트와 대화하며 코드를 짜는 바이브코딩 상황에 빗대어 보면 다음과 같습니다(장면은 이해를 돕기 위한 예시입니다).</p>
+<table>
+<tr><th>차원</th><th>바이브코딩 장면</th><th>V1</th><th>V2</th></tr>
+<tr><td>4 동시성</td><td>에이전트가 테스트를 고치는 중에 "pytest로 돌려"라고 덧붙임</td><td>메모리의 <code>ensureRunning</code>으로 실행 중인지만 관리함</td><td><code>steer</code>는 다음 안전한 스텝 경계에서, <code>queue</code>는 지금 일이 끝난 뒤 반영함(7.4절)</td></tr>
+<tr><td>5·6 저장·크래시 복구</td><td>리팩터링 도중 노트북이 꺼지거나 프로세스가 강제 종료됨</td><td>남은 도구 호출을 휴리스틱으로 정리함</td><td>실행을 시작할 때 써 둔 클레임이 남아 있으면 다음 부팅 때 "이미 끝낸 일은 반복하지 말고 이어서 하라"는 메시지를 넣고 재개함(7.6절)</td></tr>
+<tr><td>7·8 공유 서버·SSE</td><td>터미널 두 개와 데스크톱 앱에서 같은 세션을 엶</td><td>터미널마다 서버가 따로 뜸</td><td>백그라운드 서비스 하나가 SSE로 모든 화면에 같은 상태를 보여 줌(4.3절)</td></tr>
+<tr><td>14 서브에이전트</td><td>"인증 코드 위치 찾아줘"를 맡겨 놓고 그사이 UI 수정 얘기를 함</td><td><code>task</code> 도구가 끝날 때까지 부모 대화가 멈춤</td><td>하위 작업은 백그라운드로 돌고, 유휴가 되면 결과가 부모 대화에 보고됨(12.5절)</td></tr>
+<tr><td>16·17 압축·지침</td><td>몇 시간 이어지는 긴 세션</td><td>매 스텝 지침을 다시 구성해 프롬프트 캐시가 깨지기 쉬움</td><td>앞부분은 그대로 두고 바뀐 지침만 델타로 덧붙여 캐시가 유지되고, 비용·지연이 줄어듦(9.5절)</td></tr>
+<tr><td>11 Code Mode</td><td>"파일 20개 훑어서 TODO 모아줘"</td><td>Code Mode는 MCP 도구에만 쓸 수 있음</td><td><code>execute</code> 스크립트 하나로 여러 도구 호출을 묶고, 중간 결과를 모델에 모두 보여 주지 않아 토큰을 아낌(10.6절)</td></tr>
+<tr><td>12 권한</td><td>"<code>git</code> 명령은 허용하되 <code>git push</code>만 묻게" 설정</td><td>도구별 맵과 <code>tools</code> 불리언을 따로 맞춰야 함</td><td>순서 있는 <code>permissions</code> 배열 하나에서 마지막에 매치된 규칙이 이겨, 예외를 한눈에 볼 수 있음(11.1절)</td></tr>
+<tr><td>18 스냅숏</td><td>에이전트가 망친 수정을 되돌림</td><td>그림자 Git으로 되돌림</td><td>같은 방식에 패킹·동시 캡처가 더해져 더 튼튼해짐(11.9절)</td></tr>
+</table>
+<p>4번 동시성에서 사용자가 얻는 것은 <b>끼어들 수 있다는 점이 아니라, 보낸 메시지를 다루는 방법이 늘었다는 점</b>입니다. V1도 작업 중에 보낸 메시지가 다음 모델 호출에 반영되었지만, 따로 대기시키거나 전달 방식을 고를 수는 없었습니다. V2에서는 다음이 가능합니다.</p>
+<ol>
+<li><b>다음 작업을 예약할 수 있습니다.</b> <code>queue</code>로 보내면 지금 하는 일을 흔들지 않고, 작업이 끝난 유휴 경계에서 반영됩니다(7.4절).</li>
+<li><b>보낸 뒤에도 바꾸거나 취소할 수 있습니다.</b> 대기 중인 메시지는 대화 이력 밖의 <code>session_inbox</code>에 있으므로, 반영되기 전이면 <code>steer</code>와 <code>queue</code>를 서로 바꾸거나 취소할 수 있습니다(7.3절).</li>
+<li><b>메시지를 잃지 않습니다.</b> 대기 입력이 DB에 저장되므로 서버가 죽어도 남고, 같은 세션을 연 모든 화면에서 똑같이 보입니다(6장).</li>
+<li><b>압축이 끼어도 지시가 뭉개지지 않습니다.</b> 압축을 앞선 <code>steer</code>보다 먼저 처리하므로, 사용자가 보낸 지시가 요약에 섞이지 않고 원문으로 남습니다(7.4절).</li>
+</ol>
+<p>19개 차원 표에는 따로 행이 없지만, 실제로 쓸 때 가장 크게 체감되는 차이 중 하나가 <b>프롬프트 캐시</b>입니다. 에이전트는 스텝마다 거의 같은 대화를 통째로 다시 보내고, 프로바이더는 요청 앞부분이 바이트 단위로 같으면 그 부분을 캐시에서 원래 입력 가격의 10~25% 정도로 읽습니다. 그래서 <b>앞부분을 얼마나 안 바꾸느냐</b>가 비용과 응답 속도를 몇 배씩 좌우합니다(9.1절). V1(1.19.5)과 V2의 소스를 나란히 보면 차이는 세 군데입니다.</p>
+<table>
+<tr><th>장면</th><th>V1 (1.19.5)</th><th>V2</th></tr>
+<tr><td>긴 세션 도중 AGENTS.md를 고침</td><td>매 스텝 시스템 프롬프트를 새로 조립(환경, 지침 파일, MCP 지침, 스킬). 지침이 바뀌면 <b>맨 앞부터</b> 달라져 그 뒤 대화 전체가 캐시에서 빠짐</td><td>시스템 프롬프트는 에포크 동안 고정. 바뀐 지침은 대화 중간에 "변경 알림"으로 덧붙여 앞부분 캐시가 유지됨(9.5절)</td></tr>
+<tr><td>밤샘 세션이 자정을 넘김</td><td>시스템 프롬프트 안의 <code>Today's date</code>가 바뀌어 맨 앞부터 캐시가 깨짐</td><td>날짜도 지침 값의 하나라, 바뀌면 "Today's date is now: …"를 대화 중간에 덧붙일 뿐</td></tr>
+<tr><td>서브에이전트를 부르거나 <code>/fork</code>로 갈라짐</td><td>캐시 라우팅 헤더(<code>x-session-affinity</code> 등)와 <code>promptCacheKey</code>에 <b>자기 세션 ID</b>를 실음. 자식과 포크는 부모와 다른 캐시 묶음으로 감</td><td>자식은 부모의, 포크는 원본의 ID를 캐시 키로 써서 같은 캐시 쪽으로 감(7.7절)</td></tr>
+</table>
+<p>이 차이는 우연이 아니라 설계 동기입니다. 2.4절 표의 ④ "캐시 친화 컨텍스트"가 바로 이것이고, V2는 그 밖에도 끝쪽에 붙이는 plan 모드 알림, 접두를 재사용하는 압축, steps 한도에서도 도구 정의를 빼지 않는 처리처럼 캐시를 지키는 장치를 곳곳에 둡니다(9장, 8.7절). 사용자 쪽에서 캐시를 깨지 않는 습관은 9.1절의 <a href="#use-cache">사용법 상자</a>에 정리했습니다.</p>
+
+<h2 id="ch02-4">2.4 열한 가지 설계 동기</h2>
+<table>
+<tr><th>동기</th><th>요지</th><th>근거</th></tr>
+<tr><td>① 내구성 우선</td><td>입력을 실행 전에 영속 기록. 조향·대기·크래시·핸드오프를 같은 원리로</td><td><code>specs/v2/session.md</code></td></tr>
+<tr><td>② 런타임이 오케스트레이션 소유</td><td>SDK 도구 루프 금지, 스텝마다 명시적 호출</td><td>V1 llm.ts 주석, V2 AGENTS.md</td></tr>
+<tr><td>③ 다중 클라이언트와 재생</td><td>집합체별 seq + log(after, follow), 공유 서비스</td><td><code>event-stream-architecture.md</code></td></tr>
+<tr><td>④ 캐시 친화 컨텍스트</td><td>V1은 매 스텝 system 재구성 → 캐시 무효. V2는 에포크와 중간 시스템 메시지</td><td>V1 <code>CONTEXT.md</code>의 "Context Epoch"</td></tr>
+<tr><td>⑤ 명시적 권한·정책</td><td>"하나의 순서 있는 배열이 우선순위와 예외를 명시적으로"</td><td>마이그레이션 가이드</td></tr>
+<tr><td>⑥ Code Mode 일반화</td><td>병렬 호출, 중간 값 비노출로 토큰 절약</td><td><code>docs/content/tools.mdx</code></td></tr>
+<tr><td>⑦ 백그라운드 서브에이전트</td><td>영속 실행 위에서야 안전해짐</td><td>CHANGELOG #63382</td></tr>
+<tr><td>⑧ 언로드 가능한 플러그인</td><td>재생 가능한 도메인 변환, 다중 화면</td><td><code>catalog-config-plugin-lifecycle.md</code></td></tr>
+<tr><td>⑨ 타입 있는 계약</td><td>Protocol·Schema·Core의 권한 분담, 생성 클라이언트</td><td><code>specs/v2/README.md</code></td></tr>
+<tr><td>⑩ 범위 축소</td><td>LSP 실행, 세션 공유, todowrite(옵트인), CLAUDE.md 탐색 제거</td><td>마이그레이션 가이드</td></tr>
+<tr><td>⑪ 점진 이행</td><td>저장소 → 런타임 → 서버 → 코어 순으로 교체</td><td>V1 태그 이력</td></tr>
+</table>
+
+<h2 id="ch02-5">2.5 호환성: 깨진 것과 지켜진 것</h2>
+<p>공식 마이그레이션 가이드(<code>services/site/src/docs/content/migrate-v1.mdx</code>)는 의도된 단절을 셋으로 한정합니다.</p>
+<div class="box warn"><b>의도된 세 가지 단절</b>
+① 플러그인은 새 플러그인 API를 씁니다. ② 서버 API와 클라이언트의 계약이 바뀌었습니다. ③ 터미널 설정이 계층형 <code>tui.json(c)</code>에서 전역 <code>cli.json</code> 하나로 옮겨졌습니다(자동 이전). — 그 밖의 동작이 V2에서 안 되면 "호환성 버그로 취급하라"고 합니다.</div>
+<table>
+<tr><th>항목</th><th>V1</th><th>V2</th></tr>
+<tr><td>설정 형식</td><td>단수 키(<code>agent</code>, <code>permission</code>, <code>provider</code> …)</td><td>복수 키. V1 형식도 받아 메모리에서 정규화, 파일은 다시 쓰지 않음(17.14절)</td></tr>
+<tr><td>도구 이름</td><td><code>bash</code>, <code>task</code>, <code>apply_patch</code></td><td><code>shell</code>, <code>subagent</code>, <code>patch</code>. DB 이전 시 모델에게 "이름이 바뀐 도구" 안내를 주입</td></tr>
+<tr><td>지침 파일</td><td>AGENTS.md → CLAUDE.md → CONTEXT.md</td><td>AGENTS.md만</td></tr>
+<tr><td>기본 권한</td><td>external_directory ask</td><td>allow</td></tr>
+<tr><td>todo</td><td>기본 켜짐</td><td>플래그 <code>todo</code>로 옵트인</td></tr>
+<tr><td>문서 URL</td><td><code>/docs/sdk</code>, <code>/docs/rules</code>, <code>/docs/tui</code></td><td><code>/docs/build/sdk</code>, <code>/docs/instructions</code>, <code>/docs/cli/tui</code>. V1 문서는 <code>/v1/docs/</code></td></tr>
+<tr><td>패키지</td><td><code>@opencode-ai/sdk</code></td><td><code>@opencode/client</code>, <code>@opencode/sdk</code></td></tr>
+<tr><td>서버 인증</td><td><code>OPENCODE_SERVER_USERNAME</code></td><td>사용자명은 항상 <code>opencode</code>, <code>OPENCODE_PASSWORD</code></td></tr>
+<tr><td>설치</td><td>—</td><td>둘 다 <code>opencode</code> 명령이라 나란히 설치 불가</td></tr>
+</table>
+<pre><code><span class="src">core/src/database/v1-migration.bun.ts</span>const RENAMED_TOOLS = { bash: "shell", task: "subagent", apply_patch: "patch" }
+const PATH_TOOLS = ["read", "edit", "write"]
+const REMOVED_TOOLS = ["todowrite"]
+/** Tells the model about V1 tools it called in the still-visible history whose
+ * V2 names or arguments differ, so it does not repeat those calls. */</code></pre>
+<p>세심한 대목입니다. V1 세션을 V2로 가져오면 모델은 이력에서 <code>bash</code>를 호출한 기록을 보고 같은 이름으로 다시 호출하려 할 것입니다. 그래서 이전 시 "이 도구들은 이름이 바뀌었다"는 안내를 이력에 넣어 줍니다.</p>
+</section>

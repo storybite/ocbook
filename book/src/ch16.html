@@ -1,0 +1,259 @@
+<section class="chapter" id="ch16">
+<h1><span class="num">16장</span> 프로바이더·모델·LLM 계층</h1>
+<p class="lead">세션 엔진은 "모델을 한 번 호출하라"고만 말합니다. 그 호출을 Anthropic, OpenAI, Gemini, Bedrock, 로컬 Ollama 중 무엇으로 어떻게 보낼지는 이 장의 계층이 결정합니다.</p>
+
+<h2 id="ch16-1">16.1 packages/ai: 세션을 모르는 LLM 클라이언트</h2>
+<p>이 절의 요점은 <b>LLM을 부르는 계층과 에이전트 로직을 떼어 놓았다</b>는 것입니다. <code>@opencode/ai</code>는 모델을 정확히 한 번 호출하는 일만 하고, 세션·재시도·도구 루프는 위층의 세션 엔진(8장)이 맡습니다. 어느 프로바이더를 쓰든 이벤트가 같은 모양으로 나오므로 위층은 프로바이더 차이를 신경 쓰지 않아도 됩니다. Vercel AI SDK를 주 경로에서 뺀 것도 이 분리를 지키기 위해서입니다(아래 상자 참고).</p>
+<p><code>@opencode/ai</code>는 Effect 위의 스키마 우선 LLM·미디어 라이브러리입니다. 텍스트, 이미지, 비디오, decision, 임베딩(실험: 음성, 전사)을 다룹니다.</p>
+<ul>
+<li><code>ai.stream</code>/<code>ai.generate</code>는 "정확히 한 번의 모델 호출"만 합니다. 세션, 재시도 정책, 도구 루프를 모릅니다.</li>
+<li>이벤트 스트림은 프로바이더 중립입니다: OpenAI Chat, OpenAI Responses, Anthropic Messages, Gemini, Bedrock Converse, OpenAI 호환 배포에서 같은 모양.</li>
+<li>설계 원칙(<code>packages/ai/AGENTS.md</code>): 미래 호환(<code>Known | (string &amp; {})</code>), 모르는 프로바이더 이벤트 허용, 하나의 정규 모델, 세션과의 독립, "하나의 API, 두 런타임(Promise·Effect)".</li>
+</ul>
+<div class="box why"><b>왜 Vercel AI SDK를 주 경로에서 내렸을까요?</b>
+V1의 기본 경로는 AI SDK <code>streamText</code>였고, 도구 디스패치까지 SDK가 맡았습니다. V2는 "스텝마다 명시적 <code>llm.stream</code> 한 번"을 원칙으로 세웠기 때문에, 도구 루프를 품은 SDK와 맞지 않습니다. 그래서 자체 프로토콜 클라이언트를 만들고, AI SDK는 <code>aisdk:</code> 접두를 단 패키지에서만 <code>LanguageModelV3</code> 어댑터로 씁니다.</div>
+
+<h2 id="ch16-2">16.2 Provider: 활성화와 패키지</h2>
+<p>이 절은 AI 회사(Anthropic, OpenAI 등)를 쓸 수 있는지 정하는 방법과, 그 회사에 연결하는 방법을 다룹니다. 쓸 수 있는지는 프로바이더마다 붙은 스위치(<code>activation</code>)로 정합니다. 스위치는 '끔'(<code>disabled</code>), '켬'(<code>enabled</code>), '자동'(<code>auto</code>) 세 가지이고, '자동'이면 로그인이 필요한 프로바이더는 로그인했을 때만 켜지고 로그인이 필요 없는 프로바이더는 바로 켜집니다.</p>
+<p>연결은 OpenCode에 들어 있는 전용 연결 코드(네이티브 진입점)로 하는 것이 기본입니다. 외부 라이브러리(AI SDK)를 거치는 방식도 받지만, 가능하면 전용 연결 코드로 바꿔 씁니다. 그리고 다른 계정으로 바꾸면 이전 계정에서 알아낸 모델 목록 같은 정보는 버리고 새로 받습니다.</p>
+<pre><code><span class="src">packages/schema/src/provider.ts (요약)</span>Provider.Info = { id, canonical?, integrationID?, name, activation: "auto"|"enabled"|"disabled",
+  package, compatibility?, settings?, headers?, body? }</code></pre>
+<div class="mermaid">
+flowchart TD
+  I["입력: 등록된 프로바이더 하나 (예: anthropic, openai — 모델명이 아님)"] --> A
+  A{"스위치(activation)는?"} -- "끔(disabled)" --> N["못 씀 → 목록에서 뺌"]
+  A -- "켬(enabled)" --> Y["씀 → 쓸 수 있는 목록(available)에 넣음"]
+  A -- "자동(auto)" --> B{"로그인이나 API 키 연결(통합)이 필요한 곳인가?"}
+  B -- "아니오" --> Y
+  B -- "예" --> C{"/connect 등으로 연결해 두었나?"}
+  C -- "예" --> Y
+  C -- "아니오" --> N
+</div>
+<p class="cap">그림 16-1 프로바이더를 쓸 수 있는지 판단하는 순서. 등록된 프로바이더마다 한 번씩 거칩니다 (opencode.json에 직접 정의한 프로바이더는 '켬'으로 취급)</p>
+<ul>
+<li>약 100개의 <code>@opencode/ai/providers/*</code> 네이티브 진입점(anthropic, openai, azure, bedrock, google …).</li>
+<li><code>aisdk:</code> 접두 패키지는 AI SDK 브리지(<code>core/src/aisdk.ts</code>)를 거칩니다. <code>AISDKNative.rewrite</code>가 알려진 AI SDK 패키지를 가능하면 네이티브로 바꿉니다.</li>
+<li>활성 계정이 바뀌면 이전 계정 연결에 묶인 레코드는 버립니다: "이전 계정이 발견한 엔드포인트·모델을 새 연결과 섞지 말 것."</li>
+</ul>
+
+<h2 id="ch16-3">16.3 Model과 참조 문법</h2>
+<p>모델 참조는 <b><code>providerID/modelID#variant</code></b>입니다. 예: <code>anthropic/claude-sonnet-5#high</code>. 설정 <code>model</code>, 에이전트 <code>model</code>, 서브에이전트 도구의 <code>model</code> 인자에서 모두 같은 문법을 씁니다.</p>
+<table>
+<tr><th>필드</th><th>의미</th></tr>
+<tr><td><code>modelID</code></td><td>실제 API 모델 ID</td></tr>
+<tr><td><code>capabilities</code></td><td><code>tools</code>, <code>freeform?</code>, <code>input[]</code>, <code>output[]</code>, <code>temperature?</code>, <code>reasoning</code></td></tr>
+<tr><td><code>variants[]</code></td><td>추론 프리셋 등 <code>{id, settings, headers, body}</code></td></tr>
+<tr><td><code>cost</code></td><td>백만 토큰당 USD. 컨텍스트 티어 지원</td></tr>
+<tr><td><code>limit</code></td><td><code>context</code>, <code>input?</code>, <code>output</code> (내장 기본 200000 / 32000)</td></tr>
+</table>
+<h3>변형(Variant)</h3>
+<p>models.dev의 <code>capabilities.reasoning</code>에서 파생합니다.</p>
+<ul>
+<li><code>toggle</code> → <code>none</code>, <code>thinking</code></li>
+<li><code>effort</code> → 수준별 하나씩(<code>low</code>, <code>medium</code>, <code>high</code> …)</li>
+<li><code>budget</code> → 토큰 예산 변형</li>
+</ul>
+<p>패키지별 매핑(<code>PROTOCOLS</code>)이 실제 설정으로 바꿉니다(예: Anthropic 적응형 thinking, OpenAI <code>reasoning.encrypted_content</code>). 설정에서 변형을 추가·재정의할 수 있지만 <code>cache</code>는 바꿀 수 없습니다.</p>
+<div class="box why"><b>왜 temperature를 에이전트가 아니라 변형으로?</b>
+추론 모델은 temperature를 받지 않거나 무시합니다. 샘플링 설정은 "어떤 모델을 어떤 모드로 쓰는가"에 속한 성질이므로 모델 변형에 두는 편이 정확합니다. 공식 이전 문서도 V1 에이전트의 <code>temperature</code>·<code>top_p</code>는 효과가 없으니 변형에 두라고 안내하며, DeepSeek처럼 thinking을 꺼야 temperature가 적용되는 모델은 변형 하나에 두 설정을 함께 묶는 예를 듭니다. (설계 동기에 대한 이 해석은 명세에 명시된 것이 아니라 문서와 구조에서 추론한 것입니다.)</div>
+
+<div class="box use" id="use-models"><b>이렇게 씁니다 — 모델과 추론 단계 고르기: /models · /variants</b>
+<p>모델 참조는 <code>provider/model#variant</code>였습니다. TUI에서는 앞부분(모델)을 <code>/models</code>로, 뒷부분(variant)을 <code>/variants</code>로 고릅니다.</p>
+<table>
+<tr><th>동작</th><th>입력</th></tr>
+<tr><td>모델 고르기</td><td><code>/models</code> 또는 <code>ctrl+x m</code></td></tr>
+<tr><td>즐겨찾기 표시/해제(모델 대화상자 안)</td><td><code>ctrl+f</code></td></tr>
+<tr><td>최근 모델 차례로 돌리기</td><td><code>f2</code> / <code>shift+f2</code></td></tr>
+<tr><td>추론 단계 고르기</td><td><code>/variants</code> (<code>/thinking</code>, <code>/effort</code>)</td></tr>
+<tr><td>추론 단계 차례로 돌리기</td><td><code>ctrl+t</code></td></tr>
+</table>
+<p>모델 목록은 비어 있는 검색창 기준으로 <b>즐겨찾기 → 최근 → 프로바이더별 → 무료</b> 순입니다. 자주 쓰는 두세 개를 <code>ctrl+f</code>로 즐겨찾기에 넣어 두면 맨 위에서 바로 고를 수 있습니다. 최근 10개, 즐겨찾기, 모델별 마지막 variant는 <code>model.json</code>에 저장되어 다른 TUI 창과도 공유됩니다.</p>
+<p><b>variant는 무엇인가?</b> 같은 모델에 덧씌우는 이름 붙은 설정입니다. 대부분 추론 깊이(effort)입니다. Anthropic 모델은 <code>low/medium/high/xhigh/max</code>, OpenAI Responses는 <code>none/minimal/low/medium/high/xhigh</code>처럼 프로토콜마다 이름이 다르고, models.dev 카탈로그의 추론 능력에서 자동으로 만들어집니다. variant가 없는 모델에서 <code>/variants</code>를 치면 "No variants available"이 뜹니다.</p>
+<p><b>예 — 평소엔 빠르게, 어려운 대목만 깊게.</b> 평소에는 <code>medium</code>으로 일하다가, 까다로운 동시성 버그를 만나면 <code>ctrl+t</code>를 눌러 <code>high</code>나 <code>xhigh</code>로 올리고 질문합니다. 해결되면 다시 내립니다. 같은 모델 안에서 단계만 바꾸는 것이라 Anthropic·OpenAI Responses 경로에서는 캐시도 유지됩니다(9.1절).</p>
+<div class="box note"><b>참고 — 언제 적용되나</b>대화상자에서 고르는 것은 화면의 "초안"일 뿐입니다. <b>다음 프롬프트를 보낼 때</b> 세션에 <code>model-switched</code>로 기록되고 그 스텝부터 적용됩니다. 세션에 기록된 모델은 에이전트 설정의 모델보다 우선합니다. 또 <code>/compact</code>를 하면 현재 고른 모델이 세션 모델로 확정됩니다. 고른 모델이 이 위치의 카탈로그에 없으면 "Model unavailable"로 전송이 막힙니다.</div>
+</div>
+
+<h2 id="ch16-4">16.4 ModelResolver: 카탈로그에서 실행 가능한 모델로</h2>
+<div class="mermaid">
+flowchart LR
+  REF["Model.Ref<br/>provider/model#variant"] --> CAT["카탈로그 Info"]
+  CAT --> PKG{"package"}
+  PKG -- "aisdk:..." --> AS["AISDK.model<br/>(LanguageModelV3 어댑터)"]
+  PKG -- "네이티브" --> NM["module.model(modelID, settings)"]
+  CRED["자격 증명<br/>API 키 / OAuth 토큰"] --> M
+  POL["전송 정책<br/>timeout·encoding·TLS"] --> M
+  AS --> M["실행용 LanguageModel"]
+  NM --> M
+</div>
+<p class="cap">그림 16-2 모델 해석</p>
+<p>오류는 모두 타입이 있습니다: <code>VariantUnavailableError</code>, <code>UnsupportedPackageError</code>, <code>ModelConfigurationError</code>, <code>ModelInitializationError</code>, <code>UnresolvedProviderVariablesError</code>, <code>UnsupportedCompactionError</code>.</p>
+
+<h2 id="ch16-5">16.5 models.dev 카탈로그</h2>
+<ul>
+<li>번들된 스냅숏으로 콜드 스타트, 이후 ETag로 가져와 5분 TTL로 갱신(<code>OPENCODE_MODELS_URL</code>, 기본 <code>https://models.opencode.ai</code>).</li>
+<li>프로바이더마다 통합(<code>key</code>, <code>env</code> 방법)과 모델 목록을 가진 프로바이더 레코드를 등록.</li>
+<li>폐기된 모델, 폐기된 별칭 프로바이더(<code>azure-cognitive-services</code>, <code>google-vertex-anthropic</code>), 추론 프로필 전용 Bedrock 모델은 거릅니다.</li>
+<li>로컬 모델 탐색(Ollama, LM Studio, vLLM)은 2.3.0부터 요청당 15초까지 기다리고, 느린 엔드포인트가 다른 것을 지연시키지 않습니다.</li>
+</ul>
+
+<h2 id="ch16-6">16.6 자격 증명과 통합</h2>
+<ul>
+<li>값 종류: <code>oauth | key | external</code>. SQLite <code>credential</code> 테이블에 저장.</li>
+<li><code>refresh</code>는 프로세스·Location을 넘어 직렬화되고, 만료 5분 전을 "곧 만료"로 봅니다.</li>
+<li>통합 방법: <code>oauth</code>(<code>authorize</code>가 URL·안내·모드 반환), <code>command</code>, <code>key</code>, <code>external</code>, <code>env{names}</code>.</li>
+<li>CLI: <code>opencode auth login|logout|switch|list|export|import</code>.</li>
+</ul>
+
+<div class="box use" id="use-connect"><b>이렇게 씁니다 — 프로바이더 연결하기: /connect</b>
+<p>처음 설치했거나 새 프로바이더를 쓰려면 <code>/connect</code>입니다. 아무것도 연결되지 않았을 때는 이 명령이 팔레트 맨 위에 추천으로 뜹니다.</p>
+<ol>
+<li><code>/connect</code>를 입력하면 "Popular"와 "Services"로 묶인 통합 목록이 나옵니다. 연결된 것에는 <code>✓</code>가 붙습니다.</li>
+<li>예를 들어 Anthropic을 고르면 연결 방법(API 키, 외부 명령, OAuth 로그인)을 고르게 됩니다.</li>
+<li>연결이 끝나면 <b>그 프로바이더로 걸러진 모델 선택 창</b>이 바로 열립니다. 쓸 모델을 고르면 준비 끝입니다.</li>
+</ol>
+<p>자격 증명은 위에서 본 SQLite <code>credential</code> 테이블에 저장되므로 프로젝트 설정 파일에 키를 적을 필요가 없습니다. 터미널에서는 같은 일을 <code>opencode auth login</code>으로 할 수 있습니다. MCP 서버의 로그인은 여기가 아니라 <code>/mcps</code>(14장)에서 합니다. OpenCode Console 사용량(<code>/usage</code>)을 보려면 여기서 OpenCode Console에 로그인합니다.</p>
+</div>
+
+<h2 id="ch16-7">16.7 well-known: 조직이 프로바이더와 설정을 나눠 주는 법</h2>
+<p>회사에 사내 LLM 게이트웨이가 있다고 해 봅시다. 직원 100명이 저마다 <code>opencode.json</code>에 게이트웨이 주소와 모델 목록과 API 키를 적게 하면, 주소가 바뀔 때마다 100명이 파일을 고쳐야 하고 키는 파일에 그대로 남습니다. <b>well-known</b>은 이 일을 서버 한 곳으로 모읍니다. 직원은 <code>opencode auth login https://ai.example.com</code>을 한 번 실행하고, 설정은 그 서버가 내려 줍니다. 이름은 웹에서 "약속된 자리"에 안내문을 두는 관례인 <code>/.well-known/</code> 경로에서 왔습니다.</p>
+<p>V2에서 well-known은 설정 파일의 한 종류가 아니라 <b>통합(16.6절)의 한 종류</b>입니다. 로그인해야 설정이 들어오고, 받은 설정과 프로바이더는 그 서버의 주소(출처, origin)를 통합 ID로 갖습니다. 이 절은 이 두 가지가 무엇을 뜻하는지 따라갑니다(<code>wellknown.ts</code>, <code>wellknown/plugin.ts</code>, <code>config.ts</code>).</p>
+
+<h3>매니페스트: 서버가 내놓는 안내문</h3>
+<p>OpenCode는 <code>GET &lt;origin&gt;/.well-known/opencode</code>로 JSON 하나를 받습니다. 이것을 <b>매니페스트</b>라고 하고, 칸은 세 개입니다.</p>
+<table>
+<tr><th>칸</th><th>형식</th><th>뜻</th></tr>
+<tr><td><code>auth</code></td><td><code>{command: string[], env: string}</code></td><td>로그인할 때 <b>사용자 컴퓨터에서</b> 실행할 명령과, 그 명령이 출력한 키를 담을 변수 이름. <b>필수</b>입니다. 없으면 등록 자체가 거부됩니다("No authentication method found").</td></tr>
+<tr><td><code>config</code></td><td>설정 객체</td><td>매니페스트에 바로 담은 설정</td></tr>
+<tr><td><code>remote_config</code></td><td><code>{url, headers?}</code></td><td>설정을 따로 받아 올 주소. <code>url</code>과 <code>headers</code>의 <code>{env:이름}</code>이 로그인 키로 치환되므로, 인증이 필요한 주소에 둘 수 있습니다. 응답은 설정 객체 자체이거나 <code>{"config": {...}}</code></td></tr>
+</table>
+<pre><code><span class="src">https://ai.example.com/.well-known/opencode</span>{
+  "auth": {
+    "command": ["corp-sso", "token", "--audience", "opencode"],
+    "env": "CORP_TOKEN"
+  },
+  "remote_config": {
+    "url": "https://ai.example.com/opencode/config.json",
+    "headers": { "authorization": "Bearer {env:CORP_TOKEN}" }
+  }
+}</code></pre>
+<p class="cap">설명용 예입니다. <code>corp-sso</code>는 조직의 로그인 도구가 들어갈 자리입니다.</p>
+<p>왜 설정을 매니페스트에 바로 넣지 않고 <code>remote_config</code>로 한 번 더 받을까요? 매니페스트는 로그인 전에 누구나 읽는 공개 문서이기 때문입니다. 게이트웨이 주소나 사내 MCP 서버 목록처럼 밖에 보이고 싶지 않은 설정은 로그인 키가 있어야 열리는 <code>remote_config</code> 쪽에 둡니다.</p>
+
+<h3>로그인에서 적용까지</h3>
+<div class="mermaid">
+sequenceDiagram
+  participant U as 사용자
+  participant O as OpenCode
+  participant S as ai.example.com
+  U->>O: opencode auth login https://ai.example.com
+  O->>S: GET /.well-known/opencode
+  S-->>O: 매니페스트 (auth, remote_config)
+  Note over O: 출처를 등록하고<br/>통합 "ai.example.com" 생성
+  O->>O: auth.command 실행 (사용자 컴퓨터)
+  Note over O: 표준 출력 = 키<br/>credential 테이블에 저장
+  O->>S: GET remote_config.url<br/>(Bearer {env:CORP_TOKEN} 치환)
+  S-->>O: 설정 JSON
+  Note over O: 일반 설정과 같은 파서로 해석<br/>→ 설정 목록에 끼워 넣음
+</div>
+<p class="cap">그림 16-3 well-known 로그인에서 설정 적용까지</p>
+<ol>
+<li><b>출처 등록.</b> <code>auth login</code>에 <code>http(s)://</code> 주소를 주면 서버가 매니페스트를 받아 <code>auth</code>가 있는지 확인하고, 주소(끝의 <code>/</code>를 뗀 것)를 출처 목록에 올립니다. 이 주소가 곧 통합 ID입니다. 정책(11.6절)이 그 주소의 <code>integration.connect</code>를 막아 두었다면 여기서 거부됩니다.</li>
+<li><b>키 받기.</b> 통합 목록에는 호스트 이름(<code>ai.example.com</code>)으로 나타나고, 연결 방법은 "Log in" 하나입니다. 이 방법의 정체는 16.6절의 <code>command</code> 방법입니다. <code>auth.command</code>를 실행해 <b>표준 출력을 앞뒤 공백을 떼어 키로</b> 저장하고, 표준 오류는 진행 메시지로 보여 줍니다. 종료 코드가 0이 아니거나 출력이 비면 실패입니다.</li>
+<li><b>설정 받기.</b> 설정을 불러올 때마다 저장된 키를 <code>{auth.env: 키}</code> 변수로 만들어 <code>remote_config</code>를 요청합니다. 매니페스트의 <code>config</code>와 원격 설정은 각각 <code>{env:CORP_TOKEN}</code>을 치환한 뒤, <code>opencode.json</code>과 <b>똑같은 파서</b>로 해석됩니다. V1 형식의 키도 17.14절의 규칙대로 정규화됩니다.</li>
+</ol>
+
+<h3>어디에 끼어드나: 값은 사용자가, 정책은 조직이 이긴다</h3>
+<p>받은 설정은 "well-known 문서"가 되어 설정 목록의 정해진 자리에 들어갑니다. 순서는 관리형 정책 → 통합 문서(Console 등) → <b>well-known</b> → 전역 <code>opencode.json</code> → <code>OPENCODE_CONFIG</code> → 프로젝트 설정입니다(17.2절, 그림 17-1).</p>
+<ul>
+<li><b>일반 설정 값은 나중 문서가 이깁니다.</b> well-known이 <code>"model": "corp-gateway/big"</code>을 내려 줘도, 사용자가 전역이나 프로젝트 설정에 다른 <code>model</code>을 적으면 그쪽이 쓰입니다. well-known이 주는 값은 <b>기본값</b>입니다.</li>
+<li><b>정책은 먼저 로드된 문서가 이깁니다</b>(11.6절). well-known의 <code>policies</code>는 관리형 정책 다음으로 강하고, 사용자와 프로젝트의 정책보다 우선합니다.</li>
+</ul>
+<p>그래서 조직이 무언가를 <b>강제</b>하려면 설정 값이 아니라 <code>policies</code>로 내려보내야 합니다. "게이트웨이만 쓰게 하라"는 <code>model</code> 기본값이 아니라 <code>provider.use</code> 정책의 몫입니다.</p>
+<p>well-known 문서가 정의한 프로바이더는 <b>그 출처에 속합니다</b>(<code>config/integration.ts</code>의 <code>suppliers</code>). 그래서 <code>integration.use</code> 정책은 프로바이더 ID가 아니라 출처 주소로 그 프로바이더들을 한꺼번에 허용하거나 막습니다.</p>
+
+<h3>살아 있는 설정: 갱신과 장애</h3>
+<ul>
+<li><b>10분마다</b> 매니페스트를 다시 받고 원격 설정을 다시 읽어 바뀐 것을 반영합니다. <code>opencode auth switch</code>로 계정을 바꾸면 즉시 다시 읽습니다.</li>
+<li>요청 하나는 <b>15초</b>가 지나면 실패로 처리합니다.</li>
+<li>서버에 닿지 못하면 <b>마지막으로 받은 매니페스트와 설정을 계속 씁니다.</b> 둘 다 로컬 KV에 저장되므로 재시작 뒤에도 유지됩니다. 게이트웨이 서버가 잠깐 내려갔다고 사내 프로바이더와 정책이 사라지지 않게 하려는 것입니다.</li>
+<li><b>로그아웃하면</b> 저장된 원격 설정을 지우고, 다시 로그인할 때까지 그 출처는 아무 설정도 주지 않습니다(2.2.7).</li>
+</ul>
+
+<h3>조직의 통제와 사용자의 주의</h3>
+<p>조직은 정책(11.6절)으로 well-known 출처 자체를 다룰 수 있습니다. 출처 주소가 그대로 resource가 되고, 사용자가 뒤집지 못하게 하려면 관리형 정책에 둡니다.</p>
+<table>
+<tr><th>정책</th><th>효과</th></tr>
+<tr><td><code>integration.connect</code> deny</td><td>그 주소로 <code>auth login</code>을 할 수 없음</td></tr>
+<tr><td><code>integration.use</code> deny</td><td>그 출처의 프로바이더를 제거. 관리형 정책에서 막았다면 그 출처 문서는 <code>policies</code>만 남기고 나머지 설정을 버림</td></tr>
+</table>
+<pre><code><span class="src">관리형 정책 예: 승인된 출처 하나만 허용</span>"policies": [
+  { "effect": "deny",  "action": "integration.connect", "resource": "http*" },
+  { "effect": "allow", "action": "integration.connect", "resource": "https://ai.example.com" }
+]</code></pre>
+<div class="box warn"><b>원격 문서는 모든 설정을 바꿀 수 있습니다</b>
+OpenCode Console 같은 통합 문서는 <code>providers</code>, 원격 <code>mcp</code> 서버, <code>policies</code>, <code>websearch</code> 네 키만 받아들입니다(<code>config/integration.ts</code>의 <code>Remote</code>). 하지만 well-known 문서는 일반 설정 파일과 똑같이 해석되므로 이런 제한이 <b>없습니다</b>. <code>plugins</code>, <code>commands</code>, <code>instructions</code>, <code>permissions</code>, <code>shell</code>까지 내려보낼 수 있고, 플러그인도 실제로 불러옵니다(<code>instance.ts</code>의 주석, 테스트 <code>test/config/config.test.ts</code>). 게다가 로그인 순간에는 매니페스트가 정한 <code>auth.command</code>가 사용자 컴퓨터에서 실행됩니다. <b>well-known 로그인은 그 서버에 내 OpenCode의 설정 권한을 넘기는 일</b>이므로, 조직이 운영하는 신뢰할 수 있는 주소에만 하십시오.</div>
+
+<h3>V1과 무엇이 달라졌나</h3>
+<p>well-known은 V1에도 있었고, 명령(<code>opencode auth login &lt;URL&gt;</code>)과 매니페스트 형식도 같습니다. 달라진 것은 키를 보관하고 설정을 받는 방식입니다.</p>
+<table>
+<tr><th></th><th>V1</th><th>V2</th></tr>
+<tr><td>키 보관</td><td><code>auth.json</code>에 <code>{type:"wellknown", key, token}</code></td><td>출처 목록(KV)과 <code>credential</code> 테이블의 <code>key</code>. V1 항목은 첫 실행 때 자동으로 옮겨짐(<code>database/migration/20260805200742_import_legacy_credentials.ts</code>)</td></tr>
+<tr><td>로그인</td><td>CLI가 <code>auth.command</code>를 직접 실행</td><td>통합의 <code>command</code> 방법. TUI <code>/connect</code> 목록에서도 로그인</td></tr>
+<tr><td>설정 받기</td><td>설정을 불러올 때마다 받아 전역 설정 앞에 병합</td><td>별도 문서로 끼워 넣고 10분마다 갱신, 실패하면 마지막 값 사용</td></tr>
+<tr><td>정책 연동</td><td>없음</td><td>출처가 통합 ID라서 <code>integration.connect</code>·<code>integration.use</code>로 통제</td></tr>
+</table>
+
+<div class="box use" id="use-wellknown"><b>이렇게 씁니다 — 사내 게이트웨이를 well-known으로 배포하기</b>
+<p><b>조직(관리자) 쪽.</b> 위의 매니페스트를 <code>https://ai.example.com/.well-known/opencode</code>에 두고, <code>remote_config</code> 주소에서는 로그인 키를 확인한 뒤 아래 설정을 돌려줍니다.</p>
+<pre><code><span class="src">https://ai.example.com/opencode/config.json (인증 필요)</span>{
+  "providers": {
+    "corp-gateway": {
+      "name": "Corp Gateway",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "https://llm.example.com/v1", "apiKey": "{env:CORP_TOKEN}" },
+      "models": { "big": { "modelID": "corp-big-2" } }
+    }
+  },
+  "model": "corp-gateway/big",
+  "policies": [
+    { "effect": "deny",  "action": "provider.use", "resource": "*" },
+    { "effect": "allow", "action": "provider.use", "resource": "corp-gateway" }
+  ]
+}</code></pre>
+<p><code>apiKey</code>의 <code>{env:CORP_TOKEN}</code>은 사용자가 로그인할 때 받은 키로 치환되므로 설정 파일 어디에도 키가 남지 않습니다. <code>model</code>은 기본값이라 사용자가 바꿀 수 있지만, <code>policies</code>는 사용자 설정보다 강해서 게이트웨이 밖의 프로바이더를 쓸 수 없게 만듭니다.</p>
+<p><b>직원 쪽.</b></p>
+<ol>
+<li><code>opencode auth login https://ai.example.com</code>을 실행합니다. "Discovering authentication provider..." 뒤에 사내 로그인 명령이 돌고, 성공하면 끝입니다.</li>
+<li><code>/connect</code>를 열면 <code>ai.example.com</code>에 <code>✓</code>가 붙어 있고, 모델 선택 창에 <code>corp-gateway/big</code>이 보입니다.</li>
+<li>회사를 떠나거나 계정을 바꿀 때는 <code>opencode auth logout</code>으로 키를 지웁니다. 그 즉시 사내 프로바이더와 정책이 빠집니다.</li>
+</ol>
+<p><b>직접 해 보기.</b> 소스의 테스트용 서버로 흐름 전체를 로컬에서 볼 수 있습니다. 저장소에서 <code>bun packages/core/script/wellknown-server.ts</code>를 띄우고(기본 포트 8787), 다른 터미널에서 <code>opencode auth login http://127.0.0.1:8787</code>을 실행하십시오. 가짜 로그인 명령이 5초 기다린 뒤 토큰을 내놓고, 예제 프로바이더 두 개가 모델 목록에 나타납니다. 이 테스트 서버의 설정은 V1 형식(<code>provider</code>, <code>npm</code>, <code>permission</code>)으로 쓰여 있어, V2가 V1 키를 정규화하는 모습(17.14절)도 함께 볼 수 있습니다.</p>
+</div>
+
+<h2 id="ch16-8">16.8 특수 프로바이더 두 가지</h2>
+<h3>Claude Agent 프로바이더</h3>
+<p>ID <code>claude-agent</code>. 사용자가 설치한 <code>claude</code>(또는 <code>OPENCODE_CLAUDE_PATH</code>)를 Claude Agent SDK로 구동합니다. Claude Code의 내장 도구·CLAUDE.md·<code>.claude</code> 설정·훅·MCP·스킬·자동 압축은 모두 <b>끄고</b>, OpenCode의 도구를 <code>mcp__opencode__*</code>로 노출해 OpenCode 권한 체계를 통과시킵니다. 명세의 이유: "어느 모델이 썼든 이력이 같아 보이고, 권한 체계도 하나뿐이다." 세션당 프로세스 하나, 5분 유휴 시 정지. 재시도·HTTP 훅·샘플링 설정은 지원하지 않습니다.</p>
+<h3>GitHub Copilot</h3>
+<p>디바이스 OAuth 흐름으로 로그인하고, 계정의 Copilot API에서 모델과 가격을 발견합니다. <code>experimental.model.resolve</code> 훅으로 <b>Auto 라우터</b>(<code>&lt;baseURL&gt;/auto</code>)를 구현하고 세션별 선택을 유지합니다. 서브에이전트 요청에는 <code>x-initiator: agent</code>를 붙입니다.</p>
+
+<h2 id="ch16-9">16.9 mTLS와 전송 설정</h2>
+<p>2.3.0부터 게이트웨이가 상호 TLS를 요구하면 프로바이더에 클라이언트 인증서를 붙일 수 있습니다.</p>
+<pre><code><span class="src">opencode.jsonc</span>{
+  "providers": {
+    "corp-gateway": {
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://llm.corp.example/v1",
+        "apiKey": "{env:CORP_LLM_KEY}",
+        "tls": { "cert": "{file:~/.certs/me.pem}", "key": "{file:~/.certs/me.key}" },
+        "timeout": 600000, "chunkTimeout": 120000,
+        "encoding": "zstd", "transport": "http",
+        "cache": { "ttl": "1h" }
+      },
+      "models": { "big": { "modelID": "corp-big-2", "limit": { "context": 256000, "output": 32000 } } }
+    }
+  },
+  "model": "corp-gateway/big"
+}</code></pre>
+<p class="cap">설정 예제는 17장의 키 목록을 조합한 설명용입니다. 패키지 이름은 사용하는 프로바이더에 맞게 바꾸십시오.</p>
+</section>

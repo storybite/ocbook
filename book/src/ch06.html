@@ -1,0 +1,125 @@
+<section class="chapter" id="ch06">
+<h1><span class="num">6장</span> 이벤트 소싱과 저장소</h1>
+<p class="lead">V2 세션은 "메모리 속 메시지 배열"이 아닙니다. 모든 상태 변화는 SQLite에 이벤트로 기록되고, 화면과 모델이 보는 메시지 표는 그 이벤트를 투영(projection)한 결과입니다. 이 장은 V2의 모든 내구성(durability)을 떠받치는 Bus와 저장소를 다룹니다.</p>
+
+<h2 id="ch06-1">6.1 왜 이벤트 소싱인가</h2>
+<p>코딩 에이전트에는 세 가지 까다로운 요구가 있습니다.</p>
+<ol>
+<li><b>죽어도 이어서 해야 합니다.</b> 서버가 업그레이드되거나 크래시해도 진행 중이던 턴을 재개해야 합니다.</li>
+<li><b>여러 화면이 같은 세션을 봅니다.</b> TUI, 데스크톱, 웹이 동시에 붙고, 늦게 붙은 클라이언트도 정확히 따라잡아야 합니다.</li>
+<li><b>되돌릴 수 있어야 합니다.</b> 특정 메시지 이전으로 되돌리거나(revert) 갈라서(fork) 다른 길을 시도합니다.</li>
+</ol>
+<p>"무슨 일이 일어났는가"를 순서 있는 사실의 목록으로 남기면 세 요구가 모두 같은 원리로 풀립니다. 재개는 로그를 다시 읽는 것이고, 동기화는 특정 시퀀스 이후를 재생하는 것이며, 되돌리기는 경계 이후를 투영에서 지우는 것입니다.</p>
+<div class="box note"><b>AGENTS.md의 원칙</b>
+영속 이벤트는 최소로 유지합니다. 환원 불가능한 새 사실만 기록하고, 순서 있는 집합체 이력을 접어서(fold) 얻을 수 있는 상태는 반복하지 않습니다. 풍부한 정보는 투영과 읽기 모델에 둡니다.</div>
+
+<h2 id="ch06-2">6.2 영속 이벤트와 휘발 이벤트</h2>
+<table>
+<tr><th>종류</th><th>정의</th><th>예</th></tr>
+<tr><td>Durable</td><td><code>Event.durable({type, durable:{version, aggregate}, schema})</code>. 봉투 <code>{aggregateID, seq, version}</code>를 가짐. ID는 <code>evt_</code> + 오름차순 식별자</td><td><code>session.created</code>, <code>session.inbox.enqueued</code>, <code>session.step.ended</code></td></tr>
+<tr><td>Ephemeral</td><td><code>Event.ephemeral(...)</code>. 저장 안 함</td><td><code>permission.asked</code>, 텍스트 델타</td></tr>
+</table>
+<h3>세션 이벤트 카탈로그</h3>
+<p><code>packages/schema/src/session-event.ts</code>에 정의된 세션 이벤트 54종(영속 48, 휘발 6)입니다. 클라이언트가 <code>types</code> 필터로 구독할 때 이 이름을 씁니다. <b>굵게</b> 표시한 6종은 <code>Event.ephemeral</code>이라 영속 로그에서 재생되지 않습니다.</p>
+<table>
+<tr><th>분류</th><th>이벤트</th></tr>
+<tr><td>세션 수명</td><td><code>session.created</code>, <code>forked</code>, <code>moved</code>, <code>renamed</code>, <code>archived</code>, <code>unarchived</code>, <code>deleted</code>, <code>viewed</code>, <code>metadata.updated</code>, <code>permissions</code></td></tr>
+<tr><td>선택</td><td><code>session.agent.selected</code>, <code>model.selected</code></td></tr>
+<tr><td>접수(inbox)</td><td><code>session.inbox.enqueued</code>, <code>delivered</code>, <code>cancelled</code>, <code>delivery.changed</code></td></tr>
+<tr><td>실행</td><td><code>session.execution.started</code>, <code>succeeded</code>, <code>failed</code>, <code>interrupted</code></td></tr>
+<tr><td>스텝</td><td><code>session.step.started</code>, <code>first_token</code>, <code>streamed</code>, <code>ended</code>, <code>failed</code>, <code>retry.scheduled</code></td></tr>
+<tr><td>텍스트·추론</td><td><code>session.text.started</code>, <b><code>delta</code></b>, <code>ended</code>, <code>session.reasoning.started</code>, <b><code>delta</code></b>, <code>ended</code></td></tr>
+<tr><td>도구</td><td><code>session.tool.input.started</code>, <b><code>input.delta</code></b>, <code>input.ended</code>, <code>called</code>, <b><code>progress</code></b>, <code>success</code>, <code>failed</code></td></tr>
+<tr><td>입력 종류</td><td><code>session.synthetic</code>, <code>skill.activated</code>, <code>shell.started</code>, <code>shell.ended</code>, <code>instructions.updated</code>, <code>message.content.updated</code></td></tr>
+<tr><td>압축</td><td><code>session.compaction.started</code>, <b><code>delta</code></b>, <code>ended</code>, <code>failed</code></td></tr>
+<tr><td>되돌리기</td><td><code>session.revert.staged</code>, <code>cleared</code>, <code>committed</code></td></tr>
+<tr><td>사용량</td><td><code>session.usage.recorded</code>, <b><code>usage.updated</code></b></td></tr>
+</table>
+<p>텍스트·추론 델타는 100ms마다 묶여 실시간으로만 흐르고 재생되지 않습니다. <code>*.Started</code>는 파트의 시작과 식별 정보(메시지 ID, 순번)만 기록하고, <code>*.Ended</code>가 전체 텍스트를 담습니다. 소스 주석 그대로 "Text.Ended is the replayable full-value boundary"입니다. 토큰 하나하나를 영속화하지 않으면서도 결과는 잃지 않는 절충입니다.</p>
+
+<h2 id="ch06-3">6.3 Bus: 한 트랜잭션 안의 이벤트와 투영</h2>
+<p><code>packages/core/src/bus.ts</code>(909줄)는 이벤트 소싱과 실시간 pub/sub를 겸합니다. 핵심은 <code>publish</code>가 영속 이벤트를 기록하는 방식입니다.</p>
+<div class="mermaid">
+sequenceDiagram
+  participant Caller as 호출자
+  participant Bus
+  participant DB as SQLite (BEGIN IMMEDIATE)
+  participant Proj as 투영기들
+  participant Sub as 실시간 구독자
+  Caller->>Bus: publish(InboxEnqueued, data, commit?)
+  Bus->>DB: 트랜잭션 시작
+  Bus->>DB: 집합체 마지막 seq 읽기, seq = latest+1
+  Bus->>Proj: 해당 타입의 투영기 모두 실행
+  Proj->>DB: session_inbox 행 삽입 등
+  Bus->>DB: commit(seq) 훅 (클레임 등)
+  Bus->>DB: event_sequence 갱신, event 삽입
+  DB-->>Bus: COMMIT
+  Bus->>Sub: 실시간 라우팅, 로그 추종자 깨우기
+</div>
+<p class="cap">그림 6-1 영속 이벤트 발행 — 이벤트와 상태 변화가 하나의 원자 단위</p>
+<p>투영기가 죽으면(예: 이미 존재하는 ID로 <code>LifecycleConflict</code>) <b>트랜잭션 전체가 취소</b>됩니다. 이벤트는 기록됐는데 상태는 안 바뀌는 어긋남이 원천적으로 생기지 않습니다. 멱등성과 충돌 감지도 이 원자성 위에서 구현됩니다.</p>
+<pre><code><span class="src">packages/core/src/bus.ts — Interface (요약)</span>publish(definition, data, options?)   // 영속이면 위 트랜잭션
+subscribe                              // 휘발성 실시간 Stream
+log({ aggregateID, after?, follow? })  // 집합체별 영속 로그 재생
+project(definition, projector)         // 트랜잭션 내 투영 등록
+replay / remove / claim</code></pre>
+
+<h2 id="ch06-4">6.4 log와 Synced 표지: 빈틈없는 따라잡기</h2>
+<p><code>log()</code>는 <code>follow:false</code>면 로그 끝에서 완료하고, <code>follow:true</code>면 재생 후 실시간으로 전환합니다. 두 모드 모두 재생 워터마크에서 <code>Synced</code> 표지를 한 번 보냅니다.</p>
+<div class="box why"><b>재생과 실시간 사이의 틈을 어떻게 메울까요?</b>
+"과거를 읽고 나서 구독"하면 그 사이 커밋된 이벤트를 놓칩니다. Bus는 <b>먼저 구독하고 나서 과거를 읽습니다</b>. 소스 주석 그대로, 재생 중 커밋된 이벤트는 "읽기에 나타나거나, 표지 이후 깨움으로 도착"합니다. 중복은 seq로 걸러지고 누락은 없습니다.</div>
+<p>저장된 페이로드는 읽을 때 업그레이드됩니다(<code>SessionLegacy.event</code>). 옛 모양으로 쓰인 이벤트도 한 곳에서 새 스키마로 변환되므로, 이벤트 스키마를 진화시켜도 과거 로그가 깨지지 않습니다.</p>
+
+<h2 id="ch06-5">6.5 Database 서비스</h2>
+<ul>
+<li>SQLite 단일 파일을 Effect <code>SqlClient</code> 위에서 도는 사내 Drizzle 포크로 다룹니다. 드라이버는 Bun, Node, workerd(Durable Objects) 세 가지입니다.</li>
+<li>PRAGMA: <code>journal_mode=WAL</code>, <code>synchronous=NORMAL</code>, <code>busy_timeout=5000</code>, <code>cache_size=-64000</code>, <code>foreign_keys=ON</code>.</li>
+<li>파일과 <code>-wal</code>/<code>-shm</code>은 POSIX에서 0600입니다.</li>
+<li>마이그레이션은 경로별 세마포어 아래서 돕니다. 빈 DB는 <code>schema.gen.ts</code>로 한 번에 부트스트랩하고 모든 마이그레이션을 완료 처리합니다(마이그레이션 59개, 최신 <code>20261030054400_job</code>).</li>
+<li>"OpenCode는 접두사 없는 테이블 이름공간을 소유합니다. DB를 공유하는 임베더는 밑줄 접두사 테이블을 쓸 수 있습니다."</li>
+<li><code>v1-migration.bun.ts</code>(1,234줄)가 V1 데이터를 가져옵니다.</li>
+</ul>
+
+<h2 id="ch06-6">6.6 주요 테이블</h2>
+<table>
+<tr><th>테이블</th><th>용도</th></tr>
+<tr><td><code>event</code>, <code>event_sequence</code></td><td>집합체별 영속 이벤트 로그, 최신 seq와 소유자</td></tr>
+<tr><td><code>session_v2</code></td><td>세션 투영. <code>time_suspended</code>(실행 클레임), <code>resume_attempts</code> 포함</td></tr>
+<tr><td><code>session_message</code>, <code>session_part</code></td><td>메시지와 파트. <code>(session_id, seq)</code> 유일, seq는 그 행을 만든 이벤트의 seq</td></tr>
+<tr><td><code>session_inbox</code></td><td>"소비되지 않은 일만" 저장하는 대기 입력</td></tr>
+<tr><td><code>instruction_entry</code>, <code>instruction_state</code>, <code>instruction_blob</code></td><td>세션 지침 상태(해시로 중복 제거)</td></tr>
+<tr><td><code>blob</code>, <code>blob_ref</code></td><td>내용 주소 기반 바이너리 미디어, 세션/메시지별 참조 카운트</td></tr>
+<tr><td><code>project</code>, <code>worktree</code>, <code>workspace</code></td><td>프로젝트 정체성, 워크트리, 워크스페이스 바인딩</td></tr>
+<tr><td><code>permission</code></td><td>저장된 권한 승인("항상 허용")</td></tr>
+<tr><td><code>credential</code>, <code>account</code>, ...</td><td>프로바이더 자격 증명, 콘솔 계정</td></tr>
+<tr><td><code>job</code>, <code>schedule</code></td><td>백그라운드 작업(셸·이미지·서브에이전트)과 예약 실행</td></tr>
+<tr><td><code>kv</code>, <code>migration</code></td><td>범용 키-값, 적용된 마이그레이션</td></tr>
+</table>
+<div class="mermaid">
+erDiagram
+  event }o--|| event_sequence : "aggregate_id"
+  session_v2 ||--o{ session_message : "session_id"
+  session_message ||--o{ session_part : "message_id"
+  session_v2 ||--o{ session_inbox : "대기 입력"
+  session_v2 ||--o{ instruction_state : "epoch"
+  instruction_state }o--o{ instruction_blob : "hash"
+  session_message }o--o{ blob_ref : "미디어"
+  blob_ref }o--|| blob : "sha256"
+  project ||--o{ session_v2 : "project_id"
+</div>
+<p class="cap">그림 6-2 세션 관련 테이블 관계(단순화)</p>
+<p>경로 컬럼은 Windows 역슬래시를 <code>/</code>로 정규화합니다. 마이그레이션 중 프로젝트와 세션이 운영체제를 넘나들 수 있기 때문입니다.</p>
+
+<h2 id="ch06-7">6.7 디스크 위의 데이터 위치</h2>
+<p>모든 OS(Windows 포함)에서 XDG 경로를 씁니다.</p>
+<table>
+<tr><th>루트</th><th>경로</th><th>내용</th></tr>
+<tr><td>data</td><td><code>~/.local/share/opencode</code></td><td><b><code>opencode.db</code></b>(채널별 <code>opencode-&lt;channel&gt;.db</code>, <code>OPENCODE_DB</code>로 변경), <code>log/</code>, <code>repos/</code>, <code>tool-output/</code>, <code>shell/</code>, <code>snapshot/</code>, <code>artifacts/</code></td></tr>
+<tr><td>cache</td><td><code>~/.cache/opencode</code></td><td>내려받은 도구 바이너리, npm 플러그인 캐시</td></tr>
+<tr><td>config</td><td><code>~/.config/opencode</code> (<code>OPENCODE_CONFIG_DIR</code>)</td><td>전역 설정, 전역 AGENTS.md</td></tr>
+<tr><td>state</td><td><code>~/.local/state/opencode</code></td><td><code>service.json</code>, flock 잠금, PTY 데몬 런타임</td></tr>
+<tr><td>tmp</td><td><code>os.tmpdir()/opencode</code></td><td>임시 파일</td></tr>
+</table>
+<div class="box why"><b>왜 하나의 SQLite 파일일까요?</b>
+V1은 세션·메시지·파트를 각각 JSON 파일로 저장했습니다(2장 참고). 파일이 수만 개가 되면 목록 조회가 느려지고, 여러 파일에 걸친 변경을 원자적으로 할 수 없습니다. WAL 모드 SQLite는 단일 파일로 동시 읽기와 원자적 다중 테이블 쓰기를 모두 주며, 4장의 "고정 포트로 단일 서버 보장"과 결합해 쓰기 경쟁도 피합니다.</div>
+</section>

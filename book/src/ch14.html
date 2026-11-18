@@ -1,0 +1,159 @@
+<section class="chapter" id="ch14">
+<h1><span class="num">14장</span> MCP — 외부 도구와 자료 연결</h1>
+<p class="lead">이 장은 외부 도구와 자료를 연결하는 MCP를 다룹니다. 먼저 MCP로 무엇을 할 수 있는지 살펴보고, 서버 설정과 연결한 기능의 사용 방식을 설명합니다.</p>
+
+<h2 id="ch14-1">14.1 MCP: 외부 도구와 자료 연결하기</h2>
+<p><b>MCP는 외부 도구와 자료를 OpenCode에 연결하는 공통 규약입니다.</b> OpenCode가 연결하는 상대를 <b>MCP 서버</b>라고 부릅니다. 서버가 제공하는 도구를 가져오면, 에이전트는 그 도구를 사용해 작업할 수 있습니다.</p>
+<p>예를 들어 데이터베이스 조회 도구를 제공하는 MCP 서버를 연결했다고 가정하겠습니다. 그러면 에이전트는 그 서버의 도구를 이용해 데이터를 조회하고, 받은 결과를 답변에 활용할 수 있습니다. MCP가 외부 기능을 에이전트의 도구로 이어 주는 것입니다.</p>
+<p>MCP 서버는 내 컴퓨터에서 별도 프로그램으로 실행할 수도 있고, 원격 서버의 주소로 접속할 수도 있습니다. OpenCode 설정에는 실행할 명령이나 접속할 주소를 적습니다. 구체적인 설정은 14.2절에서 살펴봅니다.</p>
+<p>서버는 도구 외에도 미리 마련한 프롬프트나 읽을 자료를 제공할 수 있습니다. OpenCode에서는 프롬프트를 슬래시 명령으로 실행하고, 자료는 목록을 확인한 뒤 읽습니다. 14.3절에서는 이렇게 MCP가 제공한 기능이 OpenCode 안에서 어떻게 쓰이는지 설명합니다.</p>
+<p>코드를 써서 OpenCode 자체의 기능과 화면을 넓히는 <b>플러그인</b>, 그리고 플러그인이 작업 흐름에 끼어드는 <b>훅</b>은 <a href="#ch15">15장</a>에서 함께 다룹니다.</p>
+
+<h2 id="ch14-2">14.2 MCP 서버 설정</h2>
+<pre><code><span class="src">opencode.jsonc</span>{
+  "mcp": {
+    "timeout": { "startup": 30000, "catalog": 30000, "execution": 43200000 },
+    "servers": {
+      "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp" },
+      "db": {
+        "type": "local",
+        "command": ["bunx", "my-db-mcp", "--readonly"],
+        "environment": { "DB_URL": "{env:DB_URL}" },
+        "codemode": true,
+        "protocol": "auto"
+      }
+    }
+  }
+}</code></pre>
+<ul>
+<li>로컬: <code>command</code>, <code>cwd?</code>, <code>environment?</code>. 원격: <code>url</code>, <code>headers?</code>, <code>oauth?</code>.</li>
+<li><code>protocol</code>: <code>legacy</code>(기본, 2025-11-25까지) · <code>auto</code>(2026-07-28 탐색) · <code>2026-07-28</code>(필수).</li>
+<li><code>pool: true</code>: 2026-07-28 연결을 디렉터리 간 공유.</li>
+<li>상태: <code>connected | pending | disabled | failed | needs_auth</code>.</li>
+<li>병합: 같은 이름은 뒤 문서가 덮어쓰지만, <b>플러그인이 이미 등록한 서버가 이깁니다</b>.</li>
+</ul>
+
+<h2 id="ch14-3">14.3 MCP를 OpenCode 개념으로 매핑</h2>
+<div class="mermaid">
+flowchart LR
+  subgraph MCP["MCP 서버"]
+    T["tools"]
+    P["prompts"]
+    R["resources"]
+    I["instructions"]
+    E["events (초안 확장)"]
+  end
+  T --> CT["Code Mode 도구<br/>tools.server.tool<br/>권한 action: server_tool"]
+  P --> CM["슬래시 명령<br/>/server:prompt"]
+  R --> RT["opencode.list_mcp_resources<br/>opencode.read_mcp_resource"]
+  I --> IN["지침 베이스라인<br/>mcp_instructions 블록"]
+  E --> EV["opencode.watch_mcp_event<br/>(플래그 mcp_events)"]
+</div>
+<p class="cap">그림 14-1 MCP의 다섯 기능이 각각 다른 OpenCode 개념으로</p>
+<ul>
+<li>도구 이름은 <code>&lt;server&gt;_&lt;tool&gt;</code>(정규화). 구조화 출력을 선호하고, 출력 스키마가 없으면 JSON처럼 보이는 텍스트를 파싱합니다.</li>
+<li>이진 페이로드는 <code>ToolOutput.save</code>로 파일에 저장하고 경로만 모델에게 줍니다.</li>
+<li><code>mcp_events</code>: 모델이 폴링 대신 이벤트로 세션을 깨우게 합니다. 끊긴 스트림은 1·2·4초 후 재연결, <code>once</code> 기본 true.</li>
+</ul>
+<h3>OAuth</h3>
+<p>GitHub MCP처럼 로그인이 필요한 원격 MCP 서버가 있습니다. OpenCode는 원격 서버를 등록할 때마다 그 서버를 OAuth 로그인 대상, 곧 <b>통합(Integration)</b>으로도 함께 등록합니다. 로그인해서 받은 토큰은 <code>opencode.json</code>이 아니라 사용자 전역 저장소에 저장되므로, 설정 파일을 저장소에 커밋해도 토큰이 따라가지 않습니다. 로그인이 필요 없는 서버도 똑같이 등록되지만 이 로그인 방식을 쓰지 않을 뿐입니다. 아래 주석이 이 방침을 그대로 적고 있습니다.</p>
+<pre><code><span class="src">mcp/index.ts</span>// Register every remote server as an OAuth integration so credentials live in the global store
+// rather than in committed config. Servers that connect anonymously simply never use the method.</code></pre>
+<p>주석을 우리말로 옮기면 이렇습니다. "모든 원격 서버를 OAuth 통합으로 등록해, 자격 증명이 커밋되는 설정 파일이 아니라 전역 저장소에 있게 한다. 익명으로 연결하는 서버는 이 방식을 그냥 쓰지 않을 뿐이다."</p>
+<p>원격 서버마다 이름+URL 해시로 통합(Integration)을 만들어 자격 증명을 전역 저장소에 둡니다. DCR과 CIMD(<code>https://opencode.ai/oauth/opencode/client.json</code>), 루프백 콜백, 만료 30초 전 갱신, 발급자 변경 보호를 지원합니다.</p>
+<p><b>DCR과 CIMD는 무엇인가.</b> OAuth로 로그인하려면 클라이언트(여기서는 OpenCode)가 인증 서버에 자신을 밝히는 <code>client_id</code>를 먼저 가지고 있어야 합니다. 보통은 개발자가 서비스 콘솔에 앱을 미리 등록해 <code>client_id</code>를 받습니다(사전 등록). 하지만 MCP 클라이언트는 사용자가 어떤 서버를 붙일지 미리 알 수 없으므로, 처음 보는 인증 서버에서도 등록을 자동으로 끝낼 방법이 필요합니다. 그 두 방법이 DCR과 CIMD입니다.</p>
+<p><b>DCR(Dynamic Client Registration)</b>은 RFC 7591에 정의된 방식입니다. 로그인 전에 인증 서버의 등록 엔드포인트로 클라이언트 정보(이름, 리다이렉트 URI 등)를 POST하면 서버가 새 <code>client_id</code>를 발급합니다. 인증 서버는 메타데이터의 <code>registration_endpoint</code>로 이 방식을 지원한다고 알립니다. 발급받은 정보는 그 서버에만 유효하므로, 인증 서버가 바뀌면 새 서버에 다시 등록해야 합니다.</p>
+<p><b>CIMD(Client ID Metadata Document)</b>는 IETF OAuth 초안 <code>draft-ietf-oauth-client-id-metadata-document</code>에 정의된 방식이며, MCP 명세는 -00판을 참조합니다. 등록 호출 없이, 클라이언트가 공개해 둔 HTTPS URL 자체를 <code>client_id</code>로 보냅니다. 인증 서버는 그 URL의 JSON 문서를 내려받아 문서 안의 <code>client_id</code>가 URL과 같은지, 요청한 리다이렉트 URI가 문서에 있는지 검증합니다. 인증 서버는 메타데이터의 <code>client_id_metadata_document_supported: true</code>로 지원을 알리고, URL은 어느 인증 서버에서나 같으므로 다시 등록할 필요가 없습니다.</p>
+<p>OpenCode가 공개해 둔 문서가 바로 <code>https://opencode.ai/oauth/opencode/client.json</code>입니다. CIMD를 지원하는 인증 서버에는 이 URL이 그대로 <code>client_id</code>로 전달됩니다.</p>
+<p>쉽게 말해 CIMD는 OpenCode가 처음 보는 로그인 서버에 "저는 OpenCode이고, 제 소개서는 이 주소에 있습니다"라며 URL 하나를 건네는 방식입니다. 예전 방식인 DCR에서는 로그인 서버마다 회원가입하듯 먼저 등록해서 번호(<code>client_id</code>)를 받아야 했습니다. CIMD는 이 등록 단계를 건너뛰고 소개서 주소(<code>https://opencode.ai/oauth/opencode/client.json</code>)를 그 번호처럼 씁니다. 로그인 서버가 이 소개서를 직접 읽어 진짜 OpenCode인지, 로그인 뒤 돌려보낼 주소가 소개서에 적혀 있는지 확인하면, 사용자가 브라우저에서 로그인하고 OpenCode가 출입증(토큰)을 받아 저장합니다. 그림 14-2는 이 과정을 차례로 보여 줍니다.</p>
+<p><b>예 — CIMD로 처음 로그인하기.</b> 원격 MCP 서버 <code>my-oauth-server</code>(<code>https://mcp.example.com/mcp</code>)를 <code>oauth</code> 설정 없이 등록했고, 이 서버의 인증 서버가 <code>auth.example.com</code>이라고 합시다. "<code>oauth</code> 설정 없이 등록했다"는 말은 <code>opencode.json</code>에 원격 MCP 서버 하나를 이름과 주소만 적어 두었다는 뜻입니다. 원격 서버 항목에는 <code>url</code> 말고도 <code>headers</code>, <code>oauth</code>를 넣을 수 있는데(14.2절), 여기서는 <code>oauth</code> 칸을 아예 쓰지 않았습니다.</p>
+<pre><code><span class="src">opencode.json — oauth 없이 등록한 원격 서버</span>{
+  "mcp": {
+    "servers": {
+      "my-oauth-server": {
+        "type": "remote",
+        "url": "https://mcp.example.com/mcp"
+        // "oauth": { "client_id": ..., "redirect_uri": ... } 는 적지 않음
+      }
+    }
+  }
+}</code></pre>
+<p><code>oauth</code> 칸에 <code>client_id</code>와 <code>redirect_uri</code>를 적지 않았으므로 OpenCode가 등록 방식을 스스로 골라야 하고, 이 예에서는 그 결과 CIMD를 쓰게 됩니다. 처음 로그인하면 그림 14-2처럼 진행됩니다.</p>
+<div class="mermaid">
+sequenceDiagram
+  participant O as OpenCode
+  participant M as MCP 서버 mcp.example.com
+  participant A as 인증 서버 auth.example.com
+  participant W as opencode.ai
+  participant B as 브라우저(사용자)
+  O->>M: 토큰 없이 initialize 요청
+  M-->>O: 401, 리소스 메타데이터 위치 안내
+  O->>A: 리소스 메타데이터로 찾은 인증 서버의 메타데이터 조회
+  A-->>O: client_id_metadata_document_supported true, 인증 방식 none 지원
+  Note over O: oauth.client_id와 redirect_uri가 없으므로 CIMD 선택, 등록 호출 생략
+  O->>B: 인가 URL 열기 - client_id는 문서 URL, redirect_uri는 127.0.0.1의 임의 포트
+  B->>A: GET /authorize
+  A->>W: GET /oauth/opencode/client.json
+  W-->>A: client_id, redirect_uris 등이 담긴 문서
+  Note over A: 문서의 client_id가 URL과 같은지, redirect_uri가 목록에 있는지 검증(루프백은 포트 무시)
+  B->>A: 로그인·동의
+  A-->>B: 루프백 콜백으로 리다이렉트(code)
+  B->>O: GET /callback?code=...
+  O->>A: 토큰 요청(code, client_id는 문서 URL, 비밀값 없음)
+  A-->>O: access·refresh 토큰
+  O->>O: credential 테이블에 통합으로 저장
+</div>
+<p class="cap">그림 14-2 CIMD 로그인의 흐름 — 등록 호출 없이 문서 URL을 client_id로 쓴다</p>
+<p>OpenCode가 CIMD를 고르는 조건은 셋입니다. 설정의 <code>oauth</code>에 <code>client_id</code>와 <code>redirect_uri</code>가 없고, 인증 서버 메타데이터가 <code>client_id_metadata_document_supported: true</code>를 알리며, 토큰 엔드포인트 인증 방식에 비밀값 없는 공개 클라이언트(<code>none</code>)가 들어 있어야 합니다. 설정에 <code>client_id</code>가 있으면 그것을 쓰고, 그 밖에 조건이 어긋나면 DCR로 넘어갑니다. 공개 문서의 <code>redirect_uris</code>에는 포트 없는 루프백 주소(<code>http://127.0.0.1/callback</code>, <code>http://localhost/callback</code> 등)만 들어 있습니다. OpenCode가 로그인할 때마다 인가 코드를 돌려받을 임시 콜백 서버를 <code>127.0.0.1</code>의 임의 포트로 열기 때문이며(OpenCode 서버 자체의 포트는 고정입니다. 4장 참고), 인증 서버는 RFC 8252에 따라 루프백 리다이렉트의 포트를 무시하고 비교합니다. 그래서 <code>redirect_uri</code>를 직접 정하면 문서와 맞지 않아 CIMD 대신 DCR을 씁니다.</p>
+<p><b>인증 서버는 CIMD 지원을 어떻게 알릴까요?</b> 따로 신호를 보내는 것이 아닙니다. 인증 서버는 자기 정보를 적은 JSON 문서, 곧 <b>인증 서버 메타데이터</b>를 정해진 주소에 공개하고, 그 안에 <code>"client_id_metadata_document_supported": true</code> 항목을 넣어 둡니다. OpenCode는 이 문서를 내려받아 읽습니다. 문서를 찾아가는 순서는 그림 14-2의 앞부분과 같습니다.</p>
+<ol>
+<li>MCP 서버에 토큰 없이 <code>initialize</code> 요청을 보냅니다.</li>
+<li>401 응답의 <code>WWW-Authenticate</code> 헤더에서 리소스 메타데이터가 있는 곳과 서버가 원하는 범위(scope)를 읽습니다.</li>
+<li>리소스 메타데이터(RFC 9728)에서 인증 서버를 찾고, 그 인증 서버의 메타데이터를 받습니다. 설정의 <code>oauth.auth_server_metadata_url</code>에 주소를 적어 두면 이 탐색 대신 그 문서를 바로 씁니다.</li>
+<li>받은 메타데이터에서 이 값이 <code>true</code>이고 <code>token_endpoint_auth_methods_supported</code>에 <code>none</code>이 들어 있으면 CIMD를 고릅니다.</li>
+</ol>
+<p>인증 서버 메타데이터의 주소는 OAuth 표준(RFC 8414)이 정한 <code>/.well-known/oauth-authorization-server</code>입니다. 이 예라면 <code>https://auth.example.com/.well-known/oauth-authorization-server</code>이고, MCP 명세는 이 주소가 없을 때 OpenID Connect의 <code>/.well-known/openid-configuration</code>도 시도하게 합니다. OpenCode가 먼저 401을 받아 보는 까닭은 소스 주석이 밝힙니다. 401 응답이 리소스 메타데이터의 위치를 알려 주지 않으면 탐색은 정해진 well-known 경로를 짐작할 수밖에 없는데, 모든 서버가 그 경로에 응답하지는 않기 때문입니다.</p>
+<p><b>MCP 명세에서의 위상 변화.</b> modelcontextprotocol.io에 공개된 MCP 명세의 Authorization 절을 개정판별로 보면, 두 방식의 비중이 바뀌어 왔습니다. 2025-06-18판은 DCR 지원을 권장(SHOULD)하고 CIMD는 언급하지 않았습니다. 2025-11-25판은 CIMD 지원을 권장(SHOULD)으로 올리고, DCR은 이전 명세와의 하위 호환을 위한 선택(MAY)으로 낮췄습니다. 2026-07-28판은 CIMD 권장을 유지하면서 DCR을 폐기 예정(deprecated)으로 표시하고, 새 구현은 CIMD를 쓰라고 명시했습니다.</p>
+<p>그렇다면 DCR은 언제까지 쓸 수 있을까요? 2026-07-28 개정판은 DCR을 폐기 예정으로 표시하면서도 "CIMD를 지원하지 않는 인증 서버와의 하위 호환을 위해 남겨 둔다"고만 적었고, 제거 시점은 정하지 않았습니다. 클라이언트가 등록 방식을 고르는 우선순위도 명세에 있습니다. ① 사전 등록 정보가 있으면 그것, ② 인증 서버가 CIMD 지원을 알리면 CIMD, ③ 등록 엔드포인트가 있으면 DCR, ④ 아무것도 없으면 사용자에게 클라이언트 정보를 입력받습니다.</p>
+<div class="box why"><b>왜 OAuth 토큰을 "통합"으로 관리할까요?</b>
+토큰을 <code>opencode.json</code>에 두면 저장소에 커밋될 위험이 있습니다. 프로바이더·MCP·콘솔이 모두 같은 "통합 + 자격 증명" 추상화를 쓰면 저장·갱신·만료 처리가 한 곳에 모이고, 프로바이더 플러그인은 저장소를 직접 다루지 않아도 됩니다.</div>
+<p><b>V1과 비교하면.</b> V1도 OAuth 토큰을 <code>opencode.json</code>에 넣지 않았습니다. 다만 MCP 전용 파일 <code>~/.local/share/opencode/mcp-auth.json</code>에 따로 저장했습니다. V2는 원격 서버마다 통합을 만들어, 프로바이더 키와 함께 SQLite <code>credential</code> 테이블에 저장합니다(16.6절). 통합 ID는 <code>mcp_</code> 뒤에 "이름 + URL"의 SHA-1 해시 앞 16자리를 붙인 값입니다. URL만이 아니라 이름까지 넣는 까닭은, 같은 URL이라도 이름이 다르면 서로 다른 계정을 쓸 수 있도록 자격 증명을 따로 두기 위해서입니다. 같은 서버를 두 버전에서 설정하면 다음과 같습니다.</p>
+<pre><code><span class="src">opencode.json — V1</span>{
+  "mcp": {
+    "my-oauth-server": {
+      "type": "remote",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": { "clientId": "{env:MCP_CLIENT_ID}", "clientSecret": "{env:MCP_CLIENT_SECRET}" }
+    }
+  }
+}
+// 로그인: opencode mcp auth my-oauth-server → 토큰은 mcp-auth.json에 저장</code></pre>
+<pre><code><span class="src">opencode.json — V2</span>{
+  "mcp": {
+    "servers": {
+      "my-oauth-server": {
+        "type": "remote",
+        "url": "https://mcp.example.com/mcp",
+        "oauth": { "client_id": "{env:MCP_CLIENT_ID}", "client_secret": "{env:MCP_CLIENT_SECRET}" }
+      }
+    }
+  }
+}
+// 로그인: /mcps에서 Enter → 토큰은 credential 테이블에 통합으로 저장</code></pre>
+<p>토큰을 설정 파일에 적지 않는 점은 두 버전이 같습니다. 달라진 것은 세 가지입니다. 서버 설정이 <code>mcp.servers</code> 아래로 들어갔고, <code>oauth</code>의 키 이름이 snake_case(<code>client_id</code>, <code>client_secret</code>)로 바뀌었고, 토큰을 저장하는 곳이 MCP 전용 파일에서 공용 자격 증명 저장소로 옮겨졌습니다.</p>
+
+<div class="box use" id="use-mcps"><b>이렇게 씁니다 — MCP 서버 상태 보기와 다시 연결: /mcps · /status</b>
+<p>MCP 서버는 외부 프로세스나 원격 서버라서 끊기거나 로그인이 필요해지는 일이 흔합니다. <code>/mcps</code>는 현재 위치의 MCP 서버를 이름순으로 보여 주고 상태를 표시합니다.</p>
+<table>
+<tr><th>표시</th><th>뜻</th><th>할 일</th></tr>
+<tr><td>Connected ✓</td><td>연결됨</td><td>Space로 끊기</td></tr>
+<tr><td>Connecting …</td><td>연결 중</td><td>기다리기(이때 Space는 무시됨)</td></tr>
+<tr><td>Failed !</td><td>연결 실패</td><td>Space로 재시도, Enter로 오류와 설정 위치(<code>mcp.servers.&lt;이름&gt;</code>) 보기</td></tr>
+<tr><td>Sign in required →</td><td>인증 필요</td><td>Enter로 로그인(OAuth 등) 흐름 시작</td></tr>
+<tr><td>Disabled ○</td><td>꺼짐</td><td>Space로 연결</td></tr>
+</table>
+<p><b>예 — GitHub MCP가 갑자기 동작하지 않는다.</b> <code>/mcps</code>를 열어 보니 "Sign in required →"입니다. 토큰이 만료된 것입니다. 그 행에서 Enter를 누르면 로그인 흐름이 열리고, 끝나면 MCP 목록으로 돌아와 Connected ✓가 됩니다. "Failed !"였다면 Space로 다시 연결해 보고, 그래도 안 되면 Enter로 오류 내용을 확인합니다.</p>
+<p><code>/status</code>(<code>ctrl+x s</code>)도 같은 MCP 상태를 읽기 전용으로 짧게 보여 줍니다. 빠르게 확인만 할 때 씁니다.</p>
+<div class="box note"><b>참고</b>여기서 끊는 것은 <b>지금 실행 중인 상태만</b> 바꿉니다. 설정 파일은 고치지 않으므로 서버를 다시 띄우거나 <code>/reload</code>하면 원래대로 연결됩니다. 영구히 끄려면 설정에서 그 서버에 <code>disabled</code>를 주고 <code>/reload</code>하십시오. 쓰지 않는 MCP를 꺼 두면 도구 목록이 짧아져 모델이 헷갈리지 않고 토큰도 아낍니다.</div>
+</div>
+</section>

@@ -1,0 +1,128 @@
+<section class="chapter" id="ch03">
+<h1><span class="num">3장</span> 모노레포와 계층 아키텍처</h1>
+<p class="lead">OpenCode V2 저장소에는 서른 개가 넘는 패키지가 있습니다. 이 장에서는 패키지 목록을 외우는 대신 "어떤 방향으로만 의존할 수 있는가"라는 규칙 하나로 전체 구조를 읽는 법을 설명합니다.</p>
+
+<h2 id="ch03-1">3.1 계층으로 본 전체 그림</h2>
+<p>OpenCode V2는 크게 다섯 층으로 나뉩니다. 맨 위의 사용자 인터페이스(터미널 TUI, 데스크톱, 웹)는 모두 <b>HTTP 클라이언트</b>일 뿐이고, 실제 일은 서버 안의 Core가 합니다. Core는 LLM 호출을 <code>packages/ai</code>에 맡기고, 파일·셸·SQLite·Git 같은 실행/저장 자원을 직접 다룹니다.</p>
+<div class="mermaid">
+flowchart TB
+  subgraph UI["사용자 인터페이스 (클라이언트)"]
+    TUI["TUI<br/>packages/tui"]
+    DESK["데스크톱<br/>packages/desktop"]
+    WEB["웹 앱<br/>packages/app"]
+    EXT["외부 프로그램<br/>@opencode/client"]
+  end
+  subgraph SRV["서버 packages/server"]
+    API["HttpApi 라우터<br/>/api/..."]
+    FEED["이벤트 피드 SSE<br/>/api/event"]
+    AUTH["인증·페어링"]
+  end
+  subgraph CORE["Core packages/core — 에이전트 하네스"]
+    SES["세션 엔진<br/>Inbox·Execution·Runner"]
+    TOOL["도구·권한"]
+    EXTN["에이전트·스킬·MCP·플러그인"]
+    BUS["Bus 이벤트 소싱"]
+  end
+  AI["LLM 계층 packages/ai<br/>프로바이더별 프로토콜"]
+  RES[("파일·셸·SQLite·Git")]
+  UI -- "HTTP + SSE" --> SRV
+  SRV --> CORE
+  SES --> AI
+  TOOL --> RES
+  BUS --> RES
+</div>
+<p class="cap">그림 3-1 OpenCode V2의 논리 계층</p>
+<p>터미널에서 무언가를 입력해도 TUI가 직접 LLM을 부르거나 파일을 고치지 않습니다. TUI는 서버의 <code>session.prompt</code> API를 호출할 뿐이고, 서버가 Core의 세션 엔진을 깨워 모델과 도구를 조정합니다. 결과는 SSE 이벤트 스트림으로 다시 TUI에 흘러갑니다.</p>
+<div class="box why"><b>왜 이렇게 나눴을까요?</b>
+코딩 에이전트는 수십 분씩 일하는 장기 작업입니다. UI가 엔진을 품고 있으면 터미널 창을 닫는 순간 작업이 사라집니다. 엔진을 서버로 떼어 내면 (1) 창을 닫아도 작업이 계속되고, (2) TUI·데스크톱·웹이 같은 세션을 동시에 볼 수 있으며, (3) 원격 서버에 붙는 것도 같은 코드로 됩니다. UI는 "보여 주는 일"만, Core는 "일하는 일"만 합니다.</div>
+
+<h2 id="ch03-2">3.2 의존 방향의 법칙</h2>
+<p>루트 <code>AGENTS.md</code>는 의존 방향을 다음처럼 못 박습니다.</p>
+<blockquote class="box note"><b>AGENTS.md의 규칙</b>
+런타임 의존은 Schema → Core·Protocol → Server 방향으로만 흐릅니다. 클라이언트 런타임 코드는 Schema와 Protocol에는 의존할 수 있지만 Core나 Server에는 절대 의존하지 않습니다. <code>sdk</code>만이 Client·Core·Server를 조합합니다.</blockquote>
+<div class="mermaid">
+flowchart BT
+  schema["schema<br/>계약(런타임 없음)"]
+  util["util<br/>LayerNode·경로"]
+  ai["ai<br/>LLM 클라이언트"]
+  codemode["codemode<br/>JS 부분집합 인터프리터"]
+  protocol["protocol<br/>HttpApi 정의"]
+  core["core<br/>모든 런타임 동작"]
+  server["server<br/>HTTP 서버 조립"]
+  client["client<br/>생성된 클라이언트"]
+  sdk["sdk<br/>인프로세스 호스트"]
+  cli["cli<br/>opencode 바이너리"]
+  tui["tui / app / desktop"]
+  ai --> schema
+  protocol --> schema
+  core --> ai
+  core --> codemode
+  core --> schema
+  core --> util
+  server --> core
+  server --> protocol
+  client --> protocol
+  client --> schema
+  tui --> client
+  sdk --> client
+  sdk --> core
+  sdk --> server
+  cli --> server
+  cli --> tui
+</div>
+<p class="cap">그림 3-2 주요 패키지 의존 그래프 (화살표는 "의존한다")</p>
+<p>이 규칙이 주는 효과는 분명합니다.</p>
+<ul>
+<li><b>Schema는 브라우저에서도 돕니다.</b> 런타임이 없는 순수 계약이라 웹 앱과 데스크톱 렌더러가 그대로 가져다 씁니다.</li>
+<li><b>클라이언트는 가볍습니다.</b> Core를 끌어오지 않으므로 SQLite·셸·PTY 같은 무거운 의존 없이 서버에 붙을 수 있습니다.</li>
+<li><b>API는 하나의 진실에서 생성됩니다.</b> Protocol의 <code>HttpApi</code> 정의에서 OpenAPI 문서와 Promise·Effect 두 종류의 클라이언트를 코드 생성합니다. 생성 파일은 손으로 고치지 않습니다.</li>
+</ul>
+<div class="box warn"><b>현실과의 간극</b>
+<code>packages/tui/package.json</code>은 <code>@opencode/core</code>를 의존성으로 선언하고 있어 규칙과 어긋납니다. 규칙은 지향점이고, 코드베이스가 아직 그 방향으로 정리되는 중임을 보여 주는 예입니다.</div>
+
+<h2 id="ch03-3">3.3 런타임 핵심 패키지</h2>
+<table>
+<tr><th>패키지</th><th>역할</th><th>내부 의존</th></tr>
+<tr><td><code>schema</code></td><td>도메인 모양과 영속 이벤트 페이로드 같은 브라우저 안전 계약. 런타임 없음</td><td>없음</td></tr>
+<tr><td><code>util</code></td><td><code>LayerNode</code> DI 그래프, XDG 경로(<code>Global</code>), 프로세스·flock·npm 도우미</td><td>없음</td></tr>
+<tr><td><code>ai</code></td><td>프로바이더 중립 LLM 클라이언트. <code>ai.stream</code>/<code>ai.generate</code>는 "정확히 한 번의 모델 호출"만 하며 세션을 모릅니다</td><td>schema</td></tr>
+<tr><td><code>codemode</code></td><td>스키마로 기술된 도구 위에서 제한된 코드를 실행하는 순수 JS 부분집합 인터프리터</td><td>없음</td></tr>
+<tr><td><code>protocol</code></td><td>HTTP 계약: Effect <code>HttpApi</code> 엔드포인트 그룹, 오류, 미들웨어 태그</td><td>schema</td></tr>
+<tr><td><code>core</code></td><td>Bus, Database, Session, 도구, Location/Instance, 플러그인, 설정 등 모든 런타임 동작과 영속화</td><td>ai, codemode, plugin, schema, util, pty</td></tr>
+<tr><td><code>server</code></td><td>Protocol + Core 서비스를 묶어 HTTP 서버로 조립(인증, SSE 피드, Location 미들웨어, workerd 프로필)</td><td>core, protocol, schema, util</td></tr>
+<tr><td><code>client</code></td><td>HttpApi에서 생성한 Promise/Effect 클라이언트 + 로컬 서비스 탐색(<code>Service.ensure</code>)</td><td>schema, protocol</td></tr>
+<tr><td><code>sdk</code></td><td>서버 라우터를 메모리 안에서 실행하는 인프로세스 호스트(리스너를 열지 않음)</td><td>client, core, server</td></tr>
+<tr><td><code>plugin</code></td><td>플러그인 작성 API(Promise·Effect·RPC·TUI·GUI)와 로더</td><td>ai, client, protocol, schema</td></tr>
+<tr><td><code>process-daemon</code></td><td>Rust로 작성된 영속 PTY 데몬(<code>@opencode/pty</code>). 서버 재시작에도 터미널 유지</td><td>—</td></tr>
+</table>
+
+<h2 id="ch03-4">3.4 프런트엔드와 부속 패키지</h2>
+<table>
+<tr><th>패키지</th><th>역할</th></tr>
+<tr><td><code>cli</code></td><td><code>opencode</code> 바이너리. 명령 라우터, 서버 프로세스 모드, 서비스 관리, 업데이터</td></tr>
+<tr><td><code>tui</code></td><td>OpenTUI + SolidJS 터미널 UI. 서버와는 <code>@opencode/client</code>로만 대화</td></tr>
+<tr><td><code>app</code></td><td>웹/데스크톱 공용 SolidJS 앱(렌더러)</td></tr>
+<tr><td><code>desktop</code></td><td>Electron 셸. TUI와 같은 백그라운드 서비스를 공유</td></tr>
+<tr><td><code>gui-plugins</code></td><td>"코어 셸이 아닌 데스크톱/웹 기능은 모두 내장 GUI 플러그인"</td></tr>
+<tr><td><code>session-ui</code>, <code>ui</code>, <code>theme</code></td><td>세션 렌더링 컴포넌트, 디자인 시스템, TUI 테마 토큰</td></tr>
+<tr><td><code>patchmark</code></td><td>스트리밍 마크다운 파서(덜 끝난 인라인 문법을 치유)</td></tr>
+<tr><td><code>merman</code>, <code>latex</code></td><td>터미널용 다이어그램·수식 렌더러</td></tr>
+<tr><td><code>simulation</code>, <code>http-recorder</code></td><td>결정적 실행을 위한 가상 백엔드, HTTP 카세트 녹화·재생(테스트)</td></tr>
+<tr><td><code>httpapi-codegen</code></td><td>HttpApi + Schema에서 Promise/Effect API를 생성하는 빌드 도구</td></tr>
+<tr><td><code>plugins/figma</code></td><td>Git URL로 설치하는 선택형 Figma MCP 플러그인</td></tr>
+<tr><td><code>services/*</code></td><td>웹사이트·V2 문서, 레거시 API, 배포 메타데이터 등 별도 배포 서비스</td></tr>
+</table>
+
+<h2 id="ch03-5">3.5 기술 스택과 그 선택 이유</h2>
+<table>
+<tr><th>기술</th><th>쓰이는 곳</th><th>선택 이유(원리)</th></tr>
+<tr><td>TypeScript + Bun 1.4</td><td>전 패키지</td><td>단일 바이너리 컴파일, 빠른 시작, 내장 SQLite·셸 API</td></tr>
+<tr><td>Effect 4</td><td>core·server·client·ai</td><td>서비스 수명주기, 취소(interrupt), 구조적 동시성, 타입이 있는 오류. 장시간 에이전트 실행에서 "중단·재개·정리"를 정확히 하기 위함</td></tr>
+<tr><td>SQLite + Drizzle(포크)</td><td>core/database</td><td>단일 파일, WAL로 동시 읽기, 트랜잭션으로 이벤트와 투영을 원자적으로 기록</td></tr>
+<tr><td>SSE</td><td>/api/event</td><td>서버 → 클라이언트 단방향 스트림. 프록시 친화적이고 브라우저 기본 지원</td></tr>
+<tr><td>OpenTUI + SolidJS</td><td>tui</td><td>세밀한 반응형 갱신으로 스트리밍 토큰을 터미널에 효율적으로 그림</td></tr>
+<tr><td>Rust PTY 데몬</td><td>process-daemon</td><td>서버 프로세스가 바뀌어도 터미널 세션을 넘겨받기(handoff) 위함</td></tr>
+</table>
+<div class="box why"><b>왜 Effect인가?</b>
+에이전트 하네스의 어려움은 "성공 경로"가 아니라 "중간에 끊길 때"에 있습니다. 사용자가 Esc를 누르고, 서버가 업그레이드되고, 프로바이더가 429를 돌려주고, 서브에이전트 세 개가 동시에 돕니다. Effect는 모든 작업을 취소 가능한 파이버로 만들고, <code>Scope</code>로 자원 정리를 보장하며, 오류를 타입으로 드러냅니다. 초기 1.x는 이것을 Promise와 전역 상태로 처리했고, 1.x 후반부터 Effect로 옮겨 가기 시작했습니다(마지막 1.x인 1.19.5도 이미 파이버를 씁니다). 2.x는 처음부터 Effect를 바탕으로 다시 쓰면서 한 걸음 더 나아갔습니다. 파이버가 죽어도 작업이 사라지지 않도록, 실행 상태를 파이버를 띄우기 전에 SQLite에 먼저 기록합니다(7.6절).</div>
+</section>

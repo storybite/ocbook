@@ -1,0 +1,161 @@
+<section class="chapter" id="ch05">
+<h1><span class="num">5장</span> Effect 서비스 그래프와 Location</h1>
+<p class="lead">서버 하나는 여러 프로젝트 디렉터리를 동시에 다룹니다. 그렇다면 설정·도구·권한·에이전트처럼 "디렉터리마다 달라야 하는 것"과 데이터베이스·이벤트 버스처럼 "하나만 있어야 하는 것"을 어떻게 나눌까요? 이 장의 답은 <b>global/location 두 층의 서비스 그래프</b>입니다.</p>
+
+<h2 id="ch05-1">5.1 서비스를 정의하는 정형</h2>
+<p>Core에는 약 106개의 서비스가 있고 모두 같은 모양입니다. <code>Interface</code>(무엇을 할 수 있는가) + <code>Service</code>(태그) + <code>layer</code>(구현) + <code>node</code>(의존 선언)입니다.</p>
+<pre><code><span class="src">packages/core/src/kv.ts (요약)</span>export interface Interface {
+  readonly get: (key: string) =&gt; Effect.Effect&lt;Value | undefined&gt;
+  readonly set: (key: string, value: Value) =&gt; Effect.Effect&lt;void&gt;
+}
+export class Service extends Context.Service&lt;Service, Interface&gt;()("@opencode/KV") {}
+const layer = Layer.effect(Service, Effect.gen(function* () {
+  const db = (yield* Database.Service).db
+  return Service.of({ get: Effect.fn("KV.get")(function* (key) { ... }), ... })
+}))
+export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node] })</code></pre>
+<ul>
+<li><code>Effect.fn("KV.get")</code>로 모든 연산에 추적(trace) 이름이 붙습니다.</li>
+<li>서비스를 변수에 묶어 쓰고, <code>yield* (yield* Foo.Service).bar()</code> 같은 중첩은 ast-grep 규칙으로 금지합니다.</li>
+<li>오류는 <code>return yield* new MyError()</code>처럼 타입 있는 값으로 냅니다.</li>
+</ul>
+
+<h2 id="ch05-2">5.2 LayerNode: 선언형 의존성 그래프</h2>
+<p>Effect의 <code>Layer.provide</code>를 손으로 이어 붙이면 서비스가 100개를 넘을 때 관리가 불가능해집니다. V2는 <code>packages/util/src/effect/layer-node.ts</code>에 <b>LayerNode</b>라는 얇은 DI 계층을 만들었습니다. 각 서비스는 "레이어 + 명시적 deps + 스코프 태그"를 가진 노드로 선언됩니다.</p>
+<pre><code><span class="src">packages/util/src/effect/app-node.ts</span>export const tags = LayerNode.tags({
+  location: ["global"],   // location 노드는 global 노드에 의존 가능
+  global: [],             // global 노드는 location에 의존 불가
+})
+export const makeGlobalNode = tags.make("global")
+export const makeLocationNode = tags.make("location")</code></pre>
+<table>
+<tr><th>연산</th><th>의미</th></tr>
+<tr><td><code>LayerNode.group([...])</code></td><td>순서 있는 조합. 루트의 출력만 노출하고 의존은 숨김</td></tr>
+<tr><td><code>node.replace(other)</code></td><td>선언과 그것에 대한 모든 의존을 다른 구현으로 교체. 누락 출력·새 오류 타입·태그 교차는 컴파일 오류</td></tr>
+<tr><td><code>LayerNode.unbound(Service, tag)</code></td><td>반드시 교체로 채워야 하는 자리표시자(<code>Location.node</code>, <code>Instance.node</code> 등)</td></tr>
+<tr><td><code>compile(root, {replacements, shared})</code></td><td>지정 태그(global)의 하위 그래프는 공유, 나머지는 빌드마다 새로</td></tr>
+</table>
+<div class="box why"><b>왜 교체(replace)가 핵심일까요?</b>
+같은 그래프를 실제 서버, 시뮬레이션(<code>OPENCODE_SIMULATE</code>), Cloudflare workerd, 테스트에서 재사용해야 합니다. "데이터베이스 노드만 메모리 DB로 바꿔라"를 타입 검사 아래 한 줄로 표현할 수 있으면, 목(mock) 없이도 실제 그래프로 테스트할 수 있습니다. AGENTS.md가 "목을 피하라"고 하는 것도 이 구조 덕분에 가능합니다.</div>
+
+<h2 id="ch05-3">5.3 global 층과 location 층</h2>
+<div class="mermaid">
+flowchart TB
+  subgraph G["global 층 (프로세스에 하나)"]
+    DB[("Database<br/>SQLite")]
+    BUS["Bus"]
+    KV["KV"]
+    EXE["SessionExecution<br/>RunCoordinator"]
+    SUB["SubagentJob"]
+    JOB["Job"]
+    SES["Session 파사드"]
+    LSM["LocationServiceMap"]
+  end
+  subgraph L1["location: /repo/a"]
+    C1["Config"] --- A1["Agent"] --- T1["Tool"] --- P1["Permission"]
+    M1["Model·Provider"] --- MCP1["MCP"] --- SK1["Skill"] --- R1["SessionRunner"]
+  end
+  subgraph L2["location: /repo/b"]
+    C2["Config"] --- A2["Agent"] --- T2["Tool"] --- P2["Permission"]
+    M2["Model·Provider"] --- MCP2["MCP"] --- SK2["Skill"] --- R2["SessionRunner"]
+  end
+  LSM --> L1
+  LSM --> L2
+  L1 -. "공유" .-> G
+  L2 -. "공유" .-> G
+</div>
+<p class="cap">그림 5-1 global 그래프는 공유되고 location 그래프는 디렉터리마다 새로 컴파일됩니다</p>
+<p>루트 AGENTS.md는 "SessionRunner, 모델 해석, 도구 레지스트리, 권한, 파일시스템은 Location 범위로 유지하라"고 말합니다. 반대로 실행 조정(SessionExecution)은 프로세스 전역이며 세션 ID만으로 동작합니다. 이 분리가 7장에서 다룰 "실행은 전역, 추론은 지역" 구조의 토대입니다.</p>
+
+<h2 id="ch05-4">5.4 Location이란 무엇인가</h2>
+<pre><code><span class="src">packages/schema/src/location.ts</span>export const Ref = Schema.Struct({
+  directory: AbsolutePath,
+  workspaceID: optional(WorkspaceID),
+})</code></pre>
+<p><b>Location은 "디렉터리 + (선택적) 워크스페이스"라는 배치(placement)</b>입니다. 서버에는 "현재 디렉터리"라는 개념이 없습니다. 요청마다 자신의 Location을 지정합니다.</p>
+<ul>
+<li>일반 요청: <code>?location[directory]=</code> 쿼리나 <code>x-opencode-directory</code> 헤더, 없으면 서버 cwd. <code>LocationMiddleware</code>가 해당 Location의 서비스를 제공합니다.</li>
+<li>세션 요청: 저장된 세션에서 Location을 꺼냅니다(<code>session-location.ts</code>). 세션이 자기 디렉터리를 기억하는 것입니다.</li>
+<li><code>Location.boundNode(ref)</code>는 디렉터리의 Project를 해석해 <code>directory</code>, <code>workspaceID</code>, <code>project</code>, <code>vcs</code>를 노출합니다.</li>
+</ul>
+
+<h2 id="ch05-5">5.5 Instance: Location마다 컴파일되는 그래프</h2>
+<pre><code><span class="src">packages/core/src/instance.ts</span>// One instance is one compiled, fresh copy of the graph standing on a directory.
+export function layer(ref: Location.Ref, options: Options = {}) {
+  const replacements = [
+    ...(options.discovery === false ? vanillaReplacements : []),
+    Location.node.replace(Location.boundNode(ref)),
+    InstancePlugins.node.replace(InstancePlugins.bound(options.plugins ?? [])),
+  ]
+  return LayerNode.compile(graph, { replacements, shared: Node.tags.values.global })
+}</code></pre>
+<p>Instance 그래프에는 약 55개 노드가 들어갑니다. Config, Flag, Agent, Command, Provider, Model, ModelResolver, AISDK, Plugin, FileSystem, Pty, Shell, Skill, InstructionDiscovery, Permission, Tool, Mcp, SessionRunner 계열, Snapshot, Vcs, 그리고 맨 마지막에 LocationWatcher("부팅에 결정적인 파일시스템·Git 작업이 끝난 뒤에만 저장소 감시 시작")입니다.</p>
+<ul>
+<li><code>discovery: false</code>로 부팅하면 "바닐라" 인스턴스가 됩니다. 상위 설정 탐색, 전역 설정, AGENTS.md 탐색을 하지 않습니다(SDK 임베딩용).</li>
+<li>없는 디렉터리는 타입 있는 <code>DirectoryNotFoundError</code>(HTTP <code>LocationNotFoundError</code>)로, 그 밖의 부팅 실패는 결함(defect)으로 처리합니다.</li>
+</ul>
+
+<h2 id="ch05-6">5.6 LocationServiceMap: 캐시와 수명주기</h2>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> Booting: 첫 요청(LayerMap.get)
+  Booting --> Live: 그래프 빌드 성공
+  Booting --> [*]: 실패 시 자기 퇴출(재시도 가능)
+  Live --> Live: 요청·세션 실행(borrow)
+  Live --> Invalidating: 설정 리로드 / 유휴 60분
+  Invalidating --> Draining: 라우팅 분리 → 상호작용 취소 → 클라이언트 통지
+  Draining --> [*]: 실행 중 스텝이 경계에서 반납
+  Draining --> Draining: 30초 후에도 보유 중이면 경고 로그
+</div>
+<p class="cap">그림 5-2 Location 그래프의 수명</p>
+<ul>
+<li><code>LayerMap&lt;Location.Ref, Instance.Services&gt;</code>로 구현되며 키는 정규화된 경로입니다. Windows 서버에서도 원격 POSIX 경로를 키로 쓸 수 있도록 경로 형식을 ref마다 고릅니다.</li>
+<li><b>LocationLifecycle</b>: <code>shutdown</code>은 권한·폼·RPC를 닫고 <code>LocationEvent.Shutdown</code>을 발행합니다. <code>retain</code>은 참조 카운트로, 열린 터미널이나 클라이언트 MCP 소켓이 Location을 살려 둡니다.</li>
+<li><b>LocationActivity</b>: 전역 유휴 청소기입니다. 기본 TTL 60분, 1분마다 검사하며 <code>experimental.location_idle_timeout</code>으로 바꿀 수 있습니다. 세션 실행 중·백그라운드 작업 중·retain 중이면 퇴출하지 않습니다.</li>
+</ul>
+<div class="box why"><b>왜 "실행 중인 스텝은 경계에서 반납"할까요?</b>
+설정 파일을 고치면 Location이 리로드됩니다. 이때 모델이 스트리밍 중인 스텝을 그 자리에서 죽이면 작업이 망가집니다. 그래서 새 요청 라우팅만 먼저 끊고, 진행 중인 스텝은 옛 그래프를 "빌린 채" 끝까지 가서 다음 스텝 경계에서 새 그래프로 넘어갑니다(세션 러너의 <code>Reloaded</code> 결과). 설정 변경과 장기 실행이 서로를 방해하지 않게 만든 설계입니다.</div>
+
+<h2 id="ch05-7">5.7 Project와 Workspace</h2>
+<table>
+<tr><th>개념</th><th>정체</th><th>설계 포인트</th></tr>
+<tr><td>Project</td><td>코드베이스의 정체성. Git이면 정규화된 원격(<code>host/path</code>) → 캐시 ID → 루트 커밋 순으로 ID 결정. VCS가 없으면 <code>ID.global</code></td><td>"클론은 프로젝트 ID를 공유"합니다. 같은 저장소의 워크트리·클론이 세션과 권한 승인을 공유하게 됩니다. <code>.git</code> 경로 + 메타데이터 지문으로 캐시해 git을 반복 실행하지 않습니다</td></tr>
+<tr><td>Workspace</td><td>원격/가상 실행 환경. 프로바이더 드라이버가 뒷받침</td><td><code>create</code>는 논리 ID만 즉시 커밋하고, 실제 준비는 <code>provision</code>이 합니다. 충돌·재시도를 견디도록 드라이버 <code>create</code>는 멱등이어야 합니다</td></tr>
+</table>
+
+<div class="box use" id="use-worktrees"><b>이렇게 씁니다 — 병렬 작업은 워크트리로: /worktrees · /cd · /open</b>
+<p>세션 하나는 Location(디렉터리) 하나에서 일합니다. 그런데 두 에이전트가 <b>같은 디렉터리</b>에서 동시에 파일을 고치면 서로의 변경을 덮어씁니다. 해법은 디렉터리를 나누는 것, 즉 Git 워크트리입니다. 워크트리는 같은 저장소의 다른 작업 폴더라서 Project ID가 같고(위 표의 "클론은 프로젝트 ID를 공유"), 따라서 세션 목록과 권한 승인도 함께 씁니다. 폴더만 나뉘고 프로젝트는 하나로 유지되는 셈입니다.</p>
+<p><b>예 — 기능 개발 도중 급한 버그가 들어왔다.</b></p>
+<ol>
+<li>지금 세션은 <code>feature-search</code> 작업을 하고 있습니다. 그대로 둡니다.</li>
+<li><code>/worktrees</code>를 입력하면 "Worktrees" 대화상자가 열립니다. <code>ctrl+a</code>를 누르고 이름에 <code>fix-login</code>을 적습니다(<code>tab</code>을 누르면 임의 이름을 만들어 줍니다).</li>
+<li>Enter를 누르면 <b>새 워크트리에서 새 세션</b>이 시작됩니다. 기존 세션은 원래 폴더에 남아 계속 일합니다.</li>
+<li>새 세션에 "로그인 실패 버그 고쳐 줘"라고 시킵니다. 이제 두 에이전트가 서로 다른 폴더에서 동시에 일합니다.</li>
+<li>버그 수정이 끝나면 그 워크트리에서 브랜치를 만들어 커밋합니다. 워크트리는 <b>detached HEAD</b>로 만들어지므로 <code>git switch -c fix/login</code>처럼 브랜치를 직접 만들어야 합니다.</li>
+<li>다 썼으면 <code>/worktrees</code>에서 그 행을 골라 <code>ctrl+d</code>를 두 번 눌러 지웁니다. 커밋하지 않은 변경이 있으면 목록을 보여 주며 한 번 더 확인합니다.</li>
+</ol>
+<table>
+<tr><th>대화상자 키</th><th>하는 일</th></tr>
+<tr><td>Enter</td><td>그 폴더에서 <b>새 세션</b>을 시작(현재 세션은 그대로)</td></tr>
+<tr><td><code>ctrl+m</code></td><td><b>현재 세션을</b> 그 폴더로 옮김</td></tr>
+<tr><td><code>ctrl+a</code></td><td>이름을 받아 새 워크트리 만들기</td></tr>
+<tr><td><code>ctrl+d</code> (두 번)</td><td>워크트리 지우기(본 체크아웃은 지울 수 없음)</td></tr>
+<tr><td><code>ctrl+r</code></td><td>다시 찾기(OpenCode 밖에서 만든 워크트리도 잡힘)</td></tr>
+</table>
+<p>워크트리는 기본적으로 <code>~/.local/share/opencode/worktree/&lt;프로젝트ID 앞 6자&gt;/&lt;이름&gt;</code>에 생기고, 설정 <code>worktree.directory</code>로 바꿀 수 있습니다. 프로젝트에 <code>commands.start</code>를 정해 두면 새 워크트리마다 그 명령이 실행됩니다. 예를 들어 <code>"npm install"</code>을 넣어 두면 의존성까지 갖춘 폴더가 바로 준비됩니다(실패하면 워크트리 생성도 실패합니다). 새 워크트리는 지금 어느 워크트리에 있든 <b>본 체크아웃</b>을 기준으로 만들어진다는 점도 알아 두십시오.</p>
+<p><b><code>/cd &lt;경로&gt;</code> — 지금 세션의 작업 폴더를 옮깁니다.</b> 예를 들어 모노레포에서 <code>/cd packages/web</code>을 입력하면 세션이 그 폴더로 이동합니다. 상대 경로는 TUI를 띄운 곳이 아니라 <b>세션의 현재 폴더</b> 기준이고, 대상 폴더는 이미 있어야 합니다. 이동은 inbox에 steer로 들어가 다음 스텝 경계에서 적용되므로(7.4절), 일하던 에이전트도 다음 스텝부터 새 폴더에서 이어 갑니다. 모델에게는 "작업 디렉터리가 바뀌었다"는 메시지가 전달되고, 화면에는 <code>↳ Moved to …</code>가 찍힙니다. 새 폴더의 지침(AGENTS.md) 변화는 기존 기준선을 다시 쓰지 않고 델타로 붙으므로(9.5절) 캐시를 크게 깨지 않습니다.</p>
+<p><b><code>/open</code>(<code>ctrl+o</code>) — 빠른 전환기.</b> 모든 프로젝트를 통틀어 최근 세션 8개와 프로젝트 목록을 보여 줍니다. Git 프로젝트에서 <code>→</code>를 누르면 그 프로젝트의 워크트리 목록이 열리고, 거기서 <code>ctrl+n</code>으로 워크트리를 바로 만들 수도 있습니다. 프로젝트를 고르면 그 폴더에서 새 세션이 시작됩니다. 세션 ID(<code>ses_…</code>)를 통째로 붙여 넣으면 그 세션으로 바로 갑니다.</p>
+<div class="box note"><b>참고 — "Session location unavailable"</b>세션이 일하던 워크트리를 지우면, 그 세션을 열었을 때 프롬프트 대신 이 안내가 나옵니다. "Choose directory"를 고르면 워크트리 대화상자가 열리고, 고른 폴더로 세션이 옮겨져 다시 일할 수 있습니다.</div>
+</div>
+
+<h2 id="ch05-8">5.8 State 변환: 재생 가능한 카탈로그</h2>
+<p><code>core/src/state.ts</code>는 "현재 도메인 상태에 대한 동기적이고 재생 가능한 편집"을 제공합니다. 설정과 플러그인은 에이전트·도구·모델 카탈로그에 <b>변환(transform)</b>을 등록합니다. 읽을 때는 등록된 변환을 순서대로 다시 적용해 상태를 만듭니다. 스코프가 닫히면 그 변환만 빠지고, 가려져 있던 이전 정의가 다시 드러납니다.</p>
+<div class="mermaid">
+flowchart LR
+  B["내장 정의<br/>(pre 플러그인)"] --> E["외부 플러그인<br/>변환"] --> CF["설정 기반<br/>(post 플러그인)"] --> S["현재 카탈로그"]
+  E -. "플러그인 언로드 시<br/>해당 변환만 제거 후 재적용" .-> S
+</div>
+<p class="cap">그림 5-3 변환을 재생해 카탈로그를 만드는 방식</p>
+<div class="box why"><b>왜 "변경"이 아니라 "변환 재생"일까요?</b>
+플러그인이 도구를 덮어썼다가 언로드될 때, 변경(mutation) 방식이라면 원래 값을 기억해 되돌리는 코드가 필요하고 순서가 꼬이면 상태가 오염됩니다. 변환 목록을 처음부터 다시 적용하면 "누가 언제 빠지든" 결과가 결정적입니다. 핫 리로드가 잦은 플러그인 생태계에서 정합성을 지키는 가장 단순한 방법입니다.</div>
+</section>

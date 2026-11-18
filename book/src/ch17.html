@@ -1,0 +1,518 @@
+<section class="chapter" id="ch17">
+<h1><span class="num">17장</span> 설정 총람</h1>
+<p class="lead">이 장은 OpenCode V2.3.0의 모든 설정을 한곳에 모은 참조 장입니다. 서버/코어 설정(<code>opencode.json</code>), 터미널 설정(<code>cli.json</code>), 서비스 설정, 기능 플래그, 환경 변수, 키바인드까지 소스(<code>packages/schema/src/config*.ts</code>, <code>packages/tui/src/config</code>, <code>packages/core/src/flag.ts</code>)에서 직접 확인한 목록입니다.</p>
+
+<h2 id="ch17-1">17.1 설정 파일의 종류와 위치</h2>
+<table>
+<tr><th>파일</th><th>위치</th><th>용도</th></tr>
+<tr><td><code>opencode.json</code> / <code>opencode.jsonc</code></td><td>전역 <code>~/.config/opencode/</code>, 프로젝트 각 상위 디렉터리, 각 <code>.opencode/</code></td><td>서버·코어 설정. 둘 다 JSONC로 파싱, 같은 디렉터리면 <code>.jsonc</code> 우선</td></tr>
+<tr><td><code>cli.json</code></td><td><code>~/.config/opencode/cli.json</code> (전역 하나)</td><td>TUI 설정. 스키마 <code>https://opencode.ai/v2/cli.json</code>. 구 <code>tui.json</code>은 자동 이전</td></tr>
+<tr><td><code>service.json</code> (설정)</td><td><code>~/.config/opencode/service.json</code></td><td>백그라운드 서비스 설정(<code>opencode service get/set/unset</code>, 17.17절)</td></tr>
+<tr><td><code>service.json</code> (등록)</td><td><code>~/.local/state/opencode/service.json</code></td><td>실행 중인 서비스가 쓰는 탐색 계약(url·pid·version·password). 직접 편집하는 파일이 아님(4.3절)</td></tr>
+<tr><td>관리형 디렉터리</td><td>macOS <code>/Library/Application Support/opencode</code>, Linux <code>/etc/opencode</code>, Windows <code>%ProgramData%\opencode</code></td><td>조직 설정·정책</td></tr>
+<tr><td>macOS MDM</td><td><code>/Library/Managed Preferences/&lt;user&gt;/ai.opencode.managed.plist</code> 등</td><td>MDM 배포 설정</td></tr>
+<tr><td>well-known</td><td><code>&lt;origin&gt;/.well-known/opencode</code> (<code>opencode auth login &lt;URL&gt;</code>)</td><td>조직이 내려 주는 설정. 로그인해야 적용되고 일반 설정 파일처럼 모든 키를 받음. 10분마다 갱신(<a href="#ch16-7">16.7절</a>)</td></tr>
+</table>
+<p>마크다운 설정(에이전트·명령·스킬·플러그인·테마)은 각 설정 디렉터리의 하위 폴더에서 읽습니다.</p>
+<table>
+<tr><th>종류</th><th>경로 패턴</th><th>frontmatter</th><th>본문</th></tr>
+<tr><td>에이전트</td><td><code>agent/**/*.md</code>, <code>agents/**/*.md</code></td><td>model, variant, request, description, mode, hidden, color, steps, disabled, permissions</td><td>system</td></tr>
+<tr><td>primary 에이전트</td><td><code>mode/*.md</code>, <code>modes/*.md</code></td><td>위와 같음(mode=primary 강제)</td><td>system</td></tr>
+<tr><td>명령</td><td><code>command/**/*.md</code>, <code>commands/**/*.md</code></td><td>description, agent, model, subagent, subtask(폐기)</td><td>template</td></tr>
+<tr><td>스킬</td><td><code>skill/</code>, <code>skills/</code>, <code>.claude/skills</code>, <code>.agents/skills</code></td><td>name, description, metadata["opencode/autoinvoke"], disable-model-invocation</td><td>content</td></tr>
+<tr><td>플러그인</td><td><code>plugin/</code>, <code>plugins/</code></td><td>—</td><td><code>.ts</code>/<code>.js</code> 또는 디렉터리</td></tr>
+<tr><td>테마(TUI)</td><td><code>themes/*.json</code></td><td>—</td><td>—</td></tr>
+</table>
+
+<h2 id="ch17-2">17.2 우선순위와 병합 규칙</h2>
+<div class="mermaid">
+flowchart LR
+  P1["1 관리형 policies<br/>(정책만, 먼저 로드 = 최우선 정책)"] --> P2["2 통합 문서<br/>(Console 등)"] --> P3["3 well-known"] --> P4["4 전역 opencode.json(c)"] --> P5["5 OPENCODE_CONFIG 파일"] --> P6["6 프로젝트 opencode.json(c)<br/>먼 조상 → 가까운 디렉터리"] --> P7["7 프로젝트 .opencode/opencode.json(c)"] --> P8["8 OPENCODE_CONFIG_CONTENT"] --> P9["9 관리형 settings<br/>(모든 것을 덮음)"]
+</div>
+<p class="cap">그림 17-1 설정 로드 순서 — 오른쪽일수록 일반 설정의 우선순위가 높음</p>
+<h3>출처가 달라도 같은 길을 지난다</h3>
+<p>그림 17-1의 아홉 출처는 모양이 제각각입니다. 디스크의 파일도 있고, 환경 변수 문자열도 있고, MDM plist와 원격 서버의 응답도 있습니다. 하지만 OpenCode 안에서는 모두 <b>"JSON 텍스트 하나"</b>로 취급되고, 같은 세 단계를 거쳐 <b>문서(Document)</b>가 됩니다(<code>core/src/config.ts</code>).</p>
+<div class="mermaid">
+flowchart LR
+  F["opencode.json 파일"] --> T
+  C["OPENCODE_CONFIG_CONTENT 값"] --> T
+  M["MDM plist<br/>(JSON으로 변환)"] --> T
+  W["well-known 원격 설정"] --> T
+  T["JSON 텍스트"] --> S["① 변수 치환<br/>{env:…}, {file:…}"]
+  S --> P["② 파싱·정규화<br/>JSONC 읽기, V1 키 변환"]
+  P --> V["③ 스키마 검증<br/>Info"]
+  V --> D["문서 하나<br/>→ 설정 목록에 순서대로"]
+</div>
+<p class="cap">그림 17-2 모든 설정 출처가 지나는 공통 경로</p>
+<ol>
+<li><b>변수 치환</b>(<code>ConfigVariable.substitute</code>): 텍스트 안의 <code>{env:이름}</code>과 <code>{file:경로}</code>를 실제 값으로 바꿉니다. 아래 "변수 치환"에서 자세히 봅니다.</li>
+<li><b>파싱과 정규화</b>(<code>parseInfo</code>): 주석과 끝 쉼표를 허용하는 JSONC로 읽고, V1 형식의 키를 V2 키로 옮깁니다(17.14절).</li>
+<li><b>스키마 검증</b>: 결과를 설정 스키마(<code>Info</code>)로 확인합니다. 잘못된 값은 경고를 남기고 버립니다.</li>
+</ol>
+<p>그래서 <b><code>OPENCODE_CONFIG_CONTENT</code>는 "파일 대신 환경 변수에 담은 opencode.json"</b>입니다. 파일에 쓸 수 있는 키는 모두 쓸 수 있고, V1 형식 키도 똑같이 받아들여집니다. 코드에서도 다른 점은 텍스트를 파일에서 읽느냐 환경 변수에서 읽느냐뿐입니다.</p>
+<h3>순서가 곧 우선순위</h3>
+<p>설정을 쓰는 쪽은 값이 어느 출처에서 왔는지 묻지 않습니다. 그림 17-1 순서대로 쌓인 목록에서 <b>위치만</b> 봅니다.</p>
+<ul>
+<li><b>일반 값</b>은 그 키를 가진 <b>마지막</b> 문서를 씁니다(<code>Config.latest</code>는 <code>findLast</code>). 그래서 오른쪽일수록 강합니다. 키에 따라 이름별로 합치거나 이어 붙이는 방식은 아래 표와 같습니다.</li>
+<li><b>정책</b>은 목록을 뒤집어 읽어 <b>먼저</b> 로드된 문서가 이깁니다(11.6절). 그래서 관리형 정책이 맨 앞에 따로 놓입니다.</li>
+</ul>
+<p>같은 <code>OPENCODE_CONFIG_CONTENT</code>라도 일반 값으로는 관리형 settings 다음으로 강하지만, <code>policies</code>로는 가장 약합니다. 출처의 종류가 아니라 목록 속 자리 하나가 두 가지 우선순위를 모두 정합니다.</p>
+<div class="box use" id="use-config-content"><b>이렇게 씁니다 — 파일을 만들지 않고 설정 바꾸기: OPENCODE_CONFIG_CONTENT</b>
+<p>CI나 일회성 실행에서 저장소의 설정 파일을 건드리지 않고 몇 가지만 바꾸고 싶을 때 씁니다.</p>
+<pre><code><span class="src">bash</span>OPENCODE_CONFIG_CONTENT='{"model":"corp-gateway/big","snapshots":false}' opencode run "변경 사항을 요약해 줘"</code></pre>
+<p>이 값은 프로젝트 설정보다 뒤에 놓이므로 <code>model</code>과 <code>snapshots</code>는 이 값이 이깁니다. 다만 <code>permissions</code>처럼 이어 붙는 키는 앞의 규칙에 <b>덧붙을</b> 뿐이고, <code>policies</code>는 앞선 문서의 정책을 뒤집지 못합니다. 무엇을 막는 용도로 쓰려면 이 점을 기억하십시오.</p>
+</div>
+<table>
+<tr><th>병합 방식</th><th>키</th></tr>
+<tr><td>마지막 파일이 값 전체를 이김</td><td><code>shell</code>, <code>model</code>, <code>default_agent</code>, <code>snapshots</code>, <code>tool_output</code>, <code>websearch</code>, <code>warming</code>, <code>timezone</code>, <code>experimental</code></td></tr>
+<tr><td>이름별 병합</td><td><code>agents</code>, <code>commands</code>, <code>providers</code>(및 <code>providers.*.models</code>), <code>mcp.servers</code>. <code>mcp.timeout</code>은 필드별. <code>formatter</code>는 boolean이면 앞을 초기화, 객체면 이름별. <code>compaction</code>, <code>media.image</code>, <code>worktree</code>는 필드별</td></tr>
+<tr><td>누적(이어 붙임)</td><td><code>permissions</code>(마지막 매치 승리), <code>instructions</code>, <code>skills</code>, <code>plugins</code>, <code>watcher.ignore</code>, <code>references</code></td></tr>
+</table>
+<div class="box why"><b>왜 키마다 병합 방식이 다를까요?</b>
+<code>model</code>처럼 하나만 의미 있는 값은 덮어쓰기가 자연스럽습니다. <code>agents</code>처럼 이름 있는 항목 모음은 전역에서 정의한 에이전트를 프로젝트가 지우지 않도록 이름별로 합칩니다. <code>permissions</code>처럼 순서가 의미를 갖는 목록은 이어 붙여야 "전역 기본 + 프로젝트 예외"가 됩니다. 각 키의 의미론에 맞춰 병합을 고른 것입니다.</div>
+<h3>변수 치환</h3>
+<ul>
+<li><code>{env:VAR}</code>: 환경 변수 값(없으면 빈 문자열). JSON으로 해석하기 <b>전에 텍스트에서</b> 바꾸므로 어느 키, 어느 자리에나 쓸 수 있습니다. 치환 결과가 JSON을 깨뜨릴 때만(예: 역슬래시가 든 Windows 경로) 이스케이프해서 다시 바꿉니다. 호출하는 쪽이 별도 변수 묶음을 넘길 수도 있는데, well-known은 이것으로 로그인 키를 프로세스 환경에 퍼뜨리지 않고 치환에만 씁니다(16.7절).</li>
+<li><code>{file:path}</code>: 파일 내용(trim, JSON 이스케이프). <code>~/</code> 확장, 상대 경로는 설정 파일 기준. <code>//</code>로 시작하는 줄에서는 건너뜀.</li>
+<li>적용 대상: 설정 파일, <code>OPENCODE_CONFIG_CONTENT</code>, MDM plist, well-known 문서.</li>
+</ul>
+
+<h2 id="ch17-3">17.3 opencode.json 최상위 키</h2>
+<table>
+<tr><th>키</th><th>타입</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>$schema</code></td><td>string</td><td>—</td><td>JSON 스키마 참조</td></tr>
+<tr><td><code>shell</code></td><td>string</td><td><code>$SHELL</code>/플랫폼 감지</td><td>터미널과 shell 도구의 셸. 앱의 <code>Config.update</code>가 전역 파일에 쓰는 유일한 키</td></tr>
+<tr><td><code>model</code></td><td><code>"p/m[#variant]"</code> 또는 <code>{providerID, model, variant?}</code></td><td>—</td><td>기본 모델</td></tr>
+<tr><td><code>default_agent</code></td><td>string</td><td><code>build</code></td><td>기본 primary 에이전트</td></tr>
+<tr><td><code>update</code></td><td><code>disable</code>|<code>notify</code>|<code>auto</code></td><td><code>notify</code></td><td>업데이트 정책(CLI는 전역 디렉터리에서만 읽음)</td></tr>
+<tr><td><code>share</code></td><td><code>manual</code>|<code>auto</code>|<code>disabled</code></td><td>—</td><td>스키마는 받지만 V2에 소비자 없음(공유 기능 은퇴)</td></tr>
+<tr><td><code>enterprise.url</code></td><td>string</td><td>—</td><td>엔터프라이즈 공유 URL(소비자 없음)</td></tr>
+<tr><td><code>username</code></td><td>string</td><td>—</td><td>표시 이름(런타임 소비자 없음)</td></tr>
+<tr><td><code>timezone</code></td><td>IANA 문자열</td><td>서버 로컬</td><td>예약 작업 시간대</td></tr>
+<tr><td><code>permissions</code></td><td>Rule[]</td><td>—</td><td>순서 있는 권한 규칙(17.4)</td></tr>
+<tr><td><code>policies</code></td><td>Policy[]</td><td>—</td><td>접근 정책(17.5)</td></tr>
+<tr><td><code>agents</code></td><td>Record&lt;name, Agent&gt;</td><td>—</td><td>에이전트 정의·재정의(17.6)</td></tr>
+<tr><td><code>snapshots</code></td><td>boolean</td><td><code>true</code>(Git만)</td><td>되돌리기용 스냅숏</td></tr>
+<tr><td><code>watcher.ignore</code></td><td>string[]</td><td>—</td><td>파일 감시 무시 glob</td></tr>
+<tr><td><code>formatter</code></td><td>boolean 또는 Record</td><td><b>미설정 시 꺼짐</b></td><td><code>true</code>로 내장 포매터 활성(17.12)</td></tr>
+<tr><td><code>lsp</code></td><td>boolean 또는 Record</td><td>—</td><td>받아들이지만 V2 런타임 소비자 없음</td></tr>
+<tr><td><code>media.image.*</code></td><td>object</td><td>17.11</td><td>이미지 처리</td></tr>
+<tr><td><code>tool_output.max_lines</code></td><td>int&gt;0</td><td>2000</td><td>도구 출력 잘라내기 줄 수</td></tr>
+<tr><td><code>tool_output.max_bytes</code></td><td>int&gt;0</td><td>51200</td><td>도구 출력 잘라내기 바이트</td></tr>
+<tr><td><code>mcp</code></td><td><code>{timeout?, servers?}</code></td><td>—</td><td>17.8</td></tr>
+<tr><td><code>compaction</code></td><td>object</td><td>17.10</td><td>압축</td></tr>
+<tr><td><code>skills</code></td><td>string[]</td><td>—</td><td>추가 스킬 경로 또는 http(s) URL</td></tr>
+<tr><td><code>commands</code></td><td>Record&lt;name, Command&gt;</td><td>—</td><td>17.7</td></tr>
+<tr><td><code>instructions</code></td><td>string[]</td><td>—</td><td>추가 지침 경로·glob·URL</td></tr>
+<tr><td><code>references</code></td><td>Record&lt;alias, Ref&gt;</td><td>—</td><td>외부 디렉터리·Git 저장소(17.12)</td></tr>
+<tr><td><code>websearch</code></td><td><code>false</code> 또는 <code>{provider:"random"|ID}</code></td><td>프로바이더 결정</td><td>웹 검색(<code>false</code>로 끔)</td></tr>
+<tr><td><code>plugins</code></td><td><code>(string|{package, options?})[]</code></td><td>—</td><td><code>"-id"</code>는 제거. 상대 경로는 설정 파일 기준</td></tr>
+<tr><td><code>worktree.directory</code></td><td>string</td><td>—</td><td>새 워크트리의 부모 디렉터리</td></tr>
+<tr><td><code>warming</code></td><td>boolean 또는 <code>{prompt?, interval?, duration?}</code></td><td><code>false</code></td><td>프롬프트 캐시 예열(17.12)</td></tr>
+<tr><td><code>providers</code></td><td>Record&lt;id, Provider&gt;</td><td>—</td><td>17.9</td></tr>
+<tr><td><code>experimental</code></td><td>object</td><td>17.11</td><td>실험 옵션·기능 플래그</td></tr>
+</table>
+
+<h2 id="ch17-4">17.4 permissions</h2>
+<table>
+<tr><th>필드</th><th>타입</th><th>설명</th></tr>
+<tr><td><code>action</code></td><td>와일드카드 문자열</td><td>도구·동작 이름</td></tr>
+<tr><td><code>resource</code></td><td>와일드카드 문자열</td><td>경로, 명령 텍스트, URL 등</td></tr>
+<tr><td><code>effect</code></td><td><code>allow</code>|<code>deny</code>|<code>ask</code></td><td></td></tr>
+</table>
+<p><b>action 이름</b>: <code>read</code>, <code>edit</code>, <code>glob</code>, <code>grep</code>, <code>shell</code>, <code>webfetch</code>, <code>websearch</code>, <code>question</code>, <code>skill</code>, <code>subagent</code>, <code>todowrite</code>, <code>experimental_image_generate</code>, <code>external_directory</code>, <code>execute</code>(Code Mode), <code>opencode_list_mcp_resources</code>, <code>opencode_read_mcp_resource</code>, <code>opencode_watch_mcp_event</code>, MCP 도구 <code>&lt;server&gt;_&lt;tool&gt;</code>, 그리고 <code>*</code>.</p>
+<p><b>OpenCode 관리 도구</b>도 같은 규칙(네임스페이스<code>_</code>도구명)으로 이름이 붙고, 그 이름으로 막거나 허용할 수 있습니다(<code>tool/plugin/opencode.ts</code>, <code>schedule.ts</code>, <code>artifact.ts</code>).</p>
+<table>
+<tr><th>action</th><th>도구</th></tr>
+<tr><td><code>opencode_models</code></td><td>사용 가능한 모델 검색</td></tr>
+<tr><td><code>opencode_session_rename</code>, <code>opencode_session_move</code></td><td>세션 이름 바꾸기, 세션 디렉터리 옮기기</td></tr>
+<tr><td><code>opencode_worktree_create</code>, <code>opencode_worktree_list</code></td><td>워크트리 만들기, 목록</td></tr>
+<tr><td><code>opencode_worktree_remove</code></td><td>워크트리 삭제. 이 도구만 <code>edit</code>으로 검사하므로 <code>edit</code> 규칙의 영향도 받음</td></tr>
+<tr><td><code>opencode_schedule_create</code>, <code>_list</code>, <code>_pause</code>, <code>_resume</code>, <code>_delete</code></td><td>예약 작업(<code>schedules</code> 플래그, 17.13)</td></tr>
+<tr><td><code>opencode_artifact_create</code>, <code>_read</code>, <code>_update</code>, <code>_delete</code></td><td>아티팩트(<code>artifacts</code> 플래그, 17.13)</td></tr>
+</table>
+<p>이 도구들은 모두 Code Mode 카탈로그로 노출되므로, <code>execute</code>를 막으면 직접 도구로 바뀌어 보입니다(10.6절). 도구 하나를 완전히 숨기려면 <code>{"action": "opencode_schedule_create", "resource": "*", "effect": "deny"}</code>처럼 resource를 <code>*</code>로 막습니다.</p>
+<div class="box warn"><b>write·patch는 별도 action이 아닙니다</b>
+도구 이름은 <code>write</code>, <code>patch</code>여도 파일 변경 권한은 모두 <code>edit</code>으로 검사합니다(<code>file-write.ts</code>, <code>tool/plugin/patch.ts</code>). 설정에 <code>write</code> deny만 넣으면 쓰기가 막히지 않습니다. V1 설정의 <code>write</code>/<code>patch</code>/<code>apply_patch</code>는 로드 시 <code>edit</code>으로 정규화됩니다(17.14절).</div>
+<pre><code><span class="src">예: 보수적인 프로젝트 권한</span>"permissions": [
+  { "action": "external_directory", "resource": "*", "effect": "ask" },
+  { "action": "shell", "resource": "*", "effect": "ask" },
+  { "action": "shell", "resource": "git status *", "effect": "allow" },
+  { "action": "shell", "resource": "git push *", "effect": "deny" },
+  { "action": "edit", "resource": "migrations/*", "effect": "ask" }
+]</code></pre>
+
+<h2 id="ch17-5">17.5 policies</h2>
+<table>
+<tr><th>필드</th><th>값</th></tr>
+<tr><td><code>action</code></td><td><code>provider.use</code>(프로바이더 ID), <code>tool.use</code>(<code>&lt;tool&gt;:&lt;input&gt;</code>), <code>integration.connect</code>, <code>integration.use</code>(<code>통합#계정</code>), <code>mcp.use</code>, <code>skill.use</code>, <code>plugin.use</code>, <code>websearch.use</code></td></tr>
+<tr><td><code>resource</code></td><td>와일드카드</td></tr>
+<tr><td><code>effect</code></td><td><code>allow</code>|<code>deny</code></td></tr>
+</table>
+<p><code>experimental.policies</code>는 폐기되었고 최상위 <code>policies</code>를 씁니다.</p>
+
+<h2 id="ch17-6">17.6 agents.&lt;name&gt;</h2>
+<table>
+<tr><th>키</th><th>타입</th><th>설명</th></tr>
+<tr><td><code>model</code></td><td>모델 선택</td><td>에이전트 모델</td></tr>
+<tr><td><code>request.headers</code></td><td>Record&lt;string,string&gt;</td><td>추가 HTTP 헤더</td></tr>
+<tr><td><code>request.body</code></td><td>Record&lt;string,Json&gt;</td><td>추가 본문 필드. V1의 temperature·top_p·options가 여기로 이전되지만, 공식 이전 문서상 모델에 전송되지 않으므로 샘플링 값은 모델 <code>variants[].body</code>에 두십시오</td></tr>
+<tr><td><code>system</code></td><td>string</td><td>시스템 프롬프트(기본 프롬프트 대체)</td></tr>
+<tr><td><code>description</code></td><td>string</td><td>언제 쓰는지</td></tr>
+<tr><td><code>mode</code></td><td><code>subagent</code>|<code>primary</code>|<code>all</code></td><td></td></tr>
+<tr><td><code>hidden</code></td><td>boolean</td><td>목록·<code>@</code> 자동완성 숨김</td></tr>
+<tr><td><code>color</code></td><td><code>#RRGGBB</code></td><td>잘못된 값은 무시</td></tr>
+<tr><td><code>steps</code></td><td>int&gt;0</td><td>최대 스텝</td></tr>
+<tr><td><code>disabled</code></td><td>boolean</td><td>에이전트 제거</td></tr>
+<tr><td><code>permissions</code></td><td>Rule[]</td><td>전역 permissions 뒤에 덧붙음</td></tr>
+</table>
+
+<h2 id="ch17-7">17.7 commands.&lt;name&gt;</h2>
+<table>
+<tr><th>키</th><th>타입</th><th>설명</th></tr>
+<tr><td><code>template</code></td><td>string(필수)</td><td>프롬프트 템플릿(<code>$ARGUMENTS</code>, <code>$1…</code>, <code>!`cmd`</code>)</td></tr>
+<tr><td><code>description</code></td><td>string</td><td></td></tr>
+<tr><td><code>agent</code></td><td>string</td><td>이 에이전트로 전환</td></tr>
+<tr><td><code>model</code></td><td>모델 선택</td><td>모델 전환</td></tr>
+<tr><td><code>subagent</code></td><td>boolean</td><td>자식 세션에서 실행</td></tr>
+<tr><td><code>subtask</code></td><td>boolean</td><td><code>subagent</code>의 폐기된 별칭</td></tr>
+</table>
+
+<h2 id="ch17-8">17.8 mcp</h2>
+<table>
+<tr><th>키</th><th>타입</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>mcp.timeout.startup</code></td><td>int ms</td><td>30000</td><td>연결·초기화</td></tr>
+<tr><td><code>mcp.timeout.catalog</code></td><td>int ms</td><td>30000</td><td><code>tools/list</code>, <code>prompts/list</code></td></tr>
+<tr><td><code>mcp.timeout.execution</code></td><td>int ms</td><td>43,200,000(12시간)</td><td>도구·프롬프트 실행</td></tr>
+<tr><td><code>servers.&lt;n&gt;.type</code></td><td><code>local</code>|<code>remote</code></td><td>—</td><td></td></tr>
+<tr><td><code>…command</code></td><td>string[]</td><td>—</td><td>로컬: 명령과 인자</td></tr>
+<tr><td><code>…cwd</code></td><td>string</td><td>워크스페이스</td><td>로컬: 작업 디렉터리</td></tr>
+<tr><td><code>…environment</code></td><td>Record</td><td>—</td><td>로컬: 환경 변수</td></tr>
+<tr><td><code>…url</code></td><td>string</td><td>—</td><td>원격: 서버 URL</td></tr>
+<tr><td><code>…headers</code></td><td>Record</td><td>—</td><td>원격: HTTP 헤더</td></tr>
+<tr><td><code>…oauth</code></td><td><code>false</code> 또는 객체</td><td>자동 감지</td><td><code>false</code>면 OAuth 감지 끔</td></tr>
+<tr><td><code>…oauth.client_id</code> / <code>client_secret</code> / <code>scope</code></td><td>string</td><td>—</td><td><code>client_id</code>가 없으면 CIMD(서버가 지원하고 <code>redirect_uri</code>를 정하지 않았을 때) 또는 DCR로 등록(14.3절)</td></tr>
+<tr><td><code>…oauth.callback_port</code></td><td>1–65535</td><td>—(로그인마다 임의 포트)</td><td>로그인 동안만 여는 콜백 서버의 포트. 정해도 CIMD는 그대로 씀. V1 기본값은 19876</td></tr>
+<tr><td><code>…oauth.redirect_uri</code></td><td>string</td><td><code>http://127.0.0.1:&lt;임의 포트&gt;/callback</code></td><td>직접 정하면 CIMD를 쓰지 않고 DCR(또는 <code>client_id</code>)로 감. V1 기본값은 <code>http://127.0.0.1:19876/mcp/oauth/callback</code></td></tr>
+<tr><td><code>…oauth.auth_server_metadata_url</code></td><td>string</td><td>—</td><td>보호 리소스 메타데이터가 없는 서버용</td></tr>
+<tr><td><code>…disabled</code></td><td>boolean</td><td>false</td><td></td></tr>
+<tr><td><code>…codemode</code></td><td>boolean</td><td>true</td><td>Code Mode로 노출</td></tr>
+<tr><td><code>…timeout</code></td><td><code>{startup,catalog,execution}</code> 또는 숫자(V1)</td><td>전역값</td><td>숫자는 셋 모두 설정</td></tr>
+<tr><td><code>…protocol</code></td><td><code>legacy</code>|<code>auto</code>|<code>2026-07-28</code></td><td><code>legacy</code></td><td>프로토콜 협상</td></tr>
+<tr><td><code>…pool</code></td><td>boolean</td><td>false</td><td>디렉터리 간 연결 공유(2026-07-28 전용)</td></tr>
+</table>
+
+<h2 id="ch17-9">17.9 providers.&lt;id&gt;</h2>
+<table>
+<tr><th>키</th><th>설명</th></tr>
+<tr><td><code>canonical</code></td><td>다른 프로바이더 정의를 복사(별칭)</td></tr>
+<tr><td><code>name</code></td><td>표시 이름</td></tr>
+<tr><td><code>env</code></td><td>API 키를 담은 환경 변수 이름 목록</td></tr>
+<tr><td><code>package</code></td><td>프로바이더 패키지(<code>aisdk:</code>/npm/네이티브)</td></tr>
+<tr><td><code>compatibility.*</code></td><td>모든 모델의 호환성 기본값(아래)</td></tr>
+<tr><td><code>settings.*</code></td><td>프로바이더 설정(아래). 모르는 키는 패키지로 전달</td></tr>
+<tr><td><code>headers</code> / <code>body</code></td><td>추가 헤더 / 본문</td></tr>
+<tr><td><code>models.&lt;id&gt;.*</code></td><td>모델별 설정(아래)</td></tr>
+</table>
+<h3>settings</h3>
+<table>
+<tr><th>키</th><th>타입</th><th>설명</th></tr>
+<tr><td><code>apiKey</code></td><td>string</td><td>API 키. <code>{env:}</code>·<code>{file:}</code> 권장</td></tr>
+<tr><td><code>baseURL</code></td><td>string</td><td>엔드포인트. 프로바이더 수준 값은 카탈로그의 모델별 URL을 모두 대체</td></tr>
+<tr><td><code>timeout</code></td><td>ms 또는 <code>false</code></td><td>요청 전체</td></tr>
+<tr><td><code>headerTimeout</code></td><td>ms 또는 <code>false</code></td><td>응답 헤더 대기</td></tr>
+<tr><td><code>chunkTimeout</code></td><td>ms 또는 <code>false</code></td><td>스트림 청크 간격</td></tr>
+<tr><td><code>compaction</code></td><td><code>{type:"summary"|"native"}</code></td><td>압축 방식</td></tr>
+<tr><td><code>cache.ttl</code></td><td><code>"5m"</code>, <code>"1h"</code> …</td><td>프롬프트 캐시 TTL</td></tr>
+<tr><td><code>cache.warming</code></td><td>boolean 또는 <code>{interval?, duration?}</code></td><td>최상위 <code>warming</code> 재정의</td></tr>
+<tr><td><code>transport</code></td><td><code>http</code>|<code>websocket</code></td><td></td></tr>
+<tr><td><code>encoding</code></td><td><code>zstd</code>|<code>gzip</code>|<code>none</code></td><td>요청 본문 압축</td></tr>
+<tr><td><code>tls.cert</code> / <code>tls.key</code> / <code>tls.passphrase</code></td><td>PEM 문자열</td><td>mTLS 클라이언트 인증서(2.3.0)</td></tr>
+</table>
+<p>프로바이더별 전달 키: <code>enterpriseUrl</code>(Copilot), <code>resourceName</code>·<code>apiVersion</code>·<code>useDeploymentBasedUrls</code>(Azure), <code>region</code>·<code>profile</code>·<code>endpoint</code>(Bedrock), <code>instanceUrl</code>·<code>token</code>(GitLab), <code>authToken</code>, <code>workflowRef</code>, <code>workflowDefinition</code>, <code>reasoningEffort</code>, <code>effort</code>.</p>
+<h3>compatibility</h3>
+<table>
+<tr><th>키</th><th>설명</th></tr>
+<tr><td><code>reasoningField</code></td><td>추론 필드명: <code>reasoning</code>|<code>reasoning_content</code>|<code>reasoning_text</code>|임의</td></tr>
+<tr><td><code>requireReasoning</code></td><td>이전 assistant 메시지마다 추론 필드 전송</td></tr>
+<tr><td><code>maxTokensField</code></td><td><code>max_completion_tokens</code>|<code>max_tokens</code></td></tr>
+<tr><td><code>requireFinishReason</code></td><td>기본 true</td></tr>
+<tr><td><code>requireAssistantAfterTool</code></td><td>도구 결과와 다음 user 사이에 assistant 삽입</td></tr>
+<tr><td><code>supportsPromptCacheKey</code></td><td>V1 <code>setCacheKey</code>의 대응</td></tr>
+<tr><td><code>streamUsage</code></td><td>기본 true</td></tr>
+<tr><td><code>cacheFormat</code></td><td><code>anthropic</code>|<code>alibaba</code></td></tr>
+<tr><td><code>mediaInput</code></td><td><code>assets</code>|<code>state</code>|<code>root</code></td></tr>
+<tr><td><code>supportsThinkingBlockBinding</code></td><td>모델 수준 전용</td></tr>
+<tr><td><code>supportsEffortUpdates</code></td><td>모델 수준 전용</td></tr>
+</table>
+<h3>models.&lt;id&gt;</h3>
+<table>
+<tr><th>키</th><th>설명</th></tr>
+<tr><td><code>modelID</code></td><td>실제 API 모델 ID</td></tr>
+<tr><td><code>type</code></td><td><code>chat</code>|<code>decision</code>|<code>image</code>|문자열</td></tr>
+<tr><td><code>family</code>, <code>name</code>, <code>releaseDate</code></td><td>메타데이터(<code>YYYY-MM(-DD)</code>)</td></tr>
+<tr><td><code>compatibility</code>, <code>package</code></td><td>위와 같음</td></tr>
+<tr><td><code>settings</code></td><td><code>compaction</code>, <code>cache</code>, <code>encoding</code> + 임의</td></tr>
+<tr><td><code>headers</code> / <code>body</code></td><td></td></tr>
+<tr><td><code>capabilities.tools</code> / <code>freeform</code> / <code>input[]</code> / <code>output[]</code> / <code>temperature</code></td><td>능력 선언</td></tr>
+<tr><td><code>capabilities.reasoning</code></td><td><code>{supported:false}</code> 또는 <code>{supported:true, toggle?, effort?[], budget?{min,max}}</code></td></tr>
+<tr><td><code>variants[]</code></td><td><code>{id, settings(cache 제외), headers, body}</code></td></tr>
+<tr><td><code>cost</code></td><td><code>{tier?, input, output, cache?{read,write}}</code> 또는 배열(백만 토큰당 USD)</td></tr>
+<tr><td><code>disabled</code></td><td>boolean</td></tr>
+<tr><td><code>limit.context</code> / <code>input</code> / <code>output</code></td><td>기본 context 200000, output 32000</td></tr>
+</table>
+
+<h2 id="ch17-10">17.10 compaction</h2>
+<table>
+<tr><th>키</th><th>타입</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>auto</code></td><td>boolean</td><td>true</td><td>자동 압축</td></tr>
+<tr><td><code>keep.tokens</code></td><td>int≥0</td><td>15000</td><td>원문 유지할 최근 토큰</td></tr>
+<tr><td><code>buffer</code></td><td><code>"1%"</code>~<code>"99%"</code> 또는 토큰 수</td><td>15%, 최소 16k</td><td>컨텍스트 창 아래에 비워 둘 여유</td></tr>
+</table>
+<p>V1의 <code>preserve_recent_tokens</code>→<code>keep.tokens</code>, <code>reserved</code>→<code>buffer</code>로 이전되며 <code>tail_turns</code>, <code>prune</code>은 지원하지 않습니다.</p>
+
+<h2 id="ch17-11">17.11 media.image와 experimental</h2>
+<table>
+<tr><th>키</th><th>기본값</th></tr>
+<tr><td><code>media.image.auto_resize</code></td><td>true</td></tr>
+<tr><td><code>media.image.max_width</code> / <code>max_height</code></td><td>2000 / 2000</td></tr>
+<tr><td><code>media.image.max_base64_bytes</code></td><td>5 MiB</td></tr>
+</table>
+<table>
+<tr><th>키</th><th>타입</th><th>기본값</th><th>설명</th><th>V1에서는</th></tr>
+<tr><td><code>experimental.all_flags</code></td><td>boolean</td><td>—</td><td>모든 플래그 켬(<code>OPENCODE_FLAGS=all</code>과 동일). false는 킬 스위치가 아님</td><td>없음. 비슷한 것은 환경 변수 <code>OPENCODE_EXPERIMENTAL=1</code></td></tr>
+<tr><td><code>experimental.&lt;flag&gt;</code></td><td>boolean</td><td>채널 의존</td><td>17.13</td><td>17.13</td></tr>
+<tr><td><code>experimental.part_rows</code></td><td>boolean</td><td>false</td><td>assistant 파트를 행 단위로 저장</td><td>없음(신규)</td></tr>
+<tr><td><code>experimental.image_generate</code></td><td>boolean 또는 <code>{model}</code></td><td>켜짐</td><td>이미지 생성 도구 설정</td><td>없음(신규)</td></tr>
+<tr><td><code>experimental.subagent_depth</code></td><td>int≥0</td><td>1</td><td>서브에이전트 최대 중첩 깊이</td><td>최상위 <code>subagent_depth</code>. <b>자동 이전 안 됨</b>(17.14)</td></tr>
+<tr><td><code>experimental.location_idle_timeout</code></td><td>기간 문자열 또는 false</td><td><code>"60 minutes"</code></td><td>유휴 Location 해제</td><td>없음(신규)</td></tr>
+<tr><td><code>experimental.policies</code></td><td>Policy[]</td><td>—</td><td>폐기, 최상위 사용</td><td>있었음. 최상위 <code>policies</code>로 병합</td></tr>
+<tr><td><code>experimental.portable_shell_scanner</code>, <code>codemode_vm</code></td><td>boolean</td><td>—</td><td>폐기, 무시</td><td>없음. V2 초기 옵션. V1의 Code Mode는 환경 변수 <code>OPENCODE_EXPERIMENTAL_CODE_MODE</code>로 켰음</td></tr>
+<tr><td><code>experimental.mcp_timeout</code></td><td>int(V1)</td><td>—</td><td><code>mcp.timeout.catalog/execution</code>으로 이전</td><td>있었음(ms)</td></tr>
+</table>
+
+<h2 id="ch17-12">17.12 warming·references·formatter·lsp</h2>
+<table>
+<tr><th>키</th><th>설명</th></tr>
+<tr><td><code>warming.prompt</code></td><td>기본은 "Reply with exactly: OK" 유지 프롬프트</td></tr>
+<tr><td><code>warming.interval</code></td><td>기본 <code>"auto"</code> = 캐시 TTL의 90%, TTL이 없으면 4분</td></tr>
+<tr><td><code>warming.duration</code></td><td>기본 <code>"30 minutes"</code></td></tr>
+<tr><td><code>references.&lt;alias&gt;</code></td><td>문자열(<code>.</code>, <code>/</code>, <code>~</code>로 시작하면 로컬, 아니면 Git) 또는 <code>{repository, branch?, description?, hidden?}</code> / <code>{path, description?, hidden?}</code>. 별칭에 <code>/</code>·공백·백틱·쉼표 불가</td></tr>
+<tr><td><code>formatter.&lt;name&gt;</code></td><td><code>{disabled?, command?[]($FILE), environment?, extensions?[]}</code></td></tr>
+<tr><td><code>lsp.&lt;name&gt;</code></td><td><code>{disabled:true}</code> 또는 <code>{command[], extensions?[], disabled?, env?, initialization?}</code> (현재 미사용)</td></tr>
+</table>
+<p>내장 포매터: gofmt, mix, oxfmt, prettier, biome, zig, clang-format, ktlint, ruff, air, uv, rubocop, standardrb, htmlbeautifier, dart, ocamlformat, terraform, latexindent, gleam, shfmt, nixfmt, rustfmt, pint, ormolu, cljfmt, dfmt.</p>
+<div class="box why"><b>warming은 왜 있을까요?</b>
+프롬프트 캐시는 보통 5분이면 만료됩니다. 사용자가 코드를 읽느라 6분 쉬었다가 돌아오면 수만 토큰의 컨텍스트를 처음부터 다시 비싸게 읽힙니다. 캐시 만료 직전에 아주 짧은 요청("OK라고만 답하라")을 보내 캐시를 살려 두면 그 비용을 피할 수 있습니다. 기본은 꺼져 있습니다.</div>
+
+<h2 id="ch17-13">17.13 기능 플래그</h2>
+<p>해석 순서: <code>OPENCODE_FLAGS</code>(<code>key</code>, <code>-key</code>, <code>all</code>) → <code>experimental.&lt;key&gt;</code> → <code>experimental.all_flags:true</code> → 기본값. 기본값은 <code>local</code>·<code>dev</code> 빌드에서 켜짐, 릴리스에서 꺼짐입니다. "기능을 출시한다는 것은 그 플래그를 지우는 것"(AGENTS.md).</p>
+<table>
+<tr><th>플래그</th><th>설명</th><th>V1에서는</th></tr>
+<tr><td><code>todo</code></td><td>실험적 <code>todowrite</code> 도구</td><td><b>기본 내장 도구</b>(항상 켜짐). V2 릴리스에서는 플래그를 켜야 쓸 수 있음</td></tr>
+<tr><td><code>background_compaction</code></td><td>임계치 근처에서 백그라운드로 요약(쓰지 않은 요약도 비용 발생)</td><td>없음(신규)</td></tr>
+<tr><td><code>media_blob</code></td><td>새 세션 미디어를 중복 제거 blob 테이블에 한 번만 저장</td><td>없음(신규)</td></tr>
+<tr><td><code>schedules</code></td><td>세션을 프롬프트로 깨우는 예약 작업</td><td>없음(신규)</td></tr>
+<tr><td><code>artifacts</code></td><td>플러그인형 프로바이더 기반 아티팩트</td><td>없음(신규)</td></tr>
+<tr><td><code>shell_timeout_background</code></td><td>포그라운드 셸이 타임아웃되면 백그라운드로 이동</td><td>없음(신규)</td></tr>
+<tr><td><code>console_watches</code></td><td>OpenCode Console을 통해 Slack 스레드, GitHub PR/이슈/커밋/Actions, MCP 이벤트를 감시해 세션 깨우기</td><td>없음(신규)</td></tr>
+<tr><td><code>mcp_events</code></td><td>MCP Events(초안 확장) 지원 선언과 이벤트 읽기</td><td>없음(신규)</td></tr>
+</table>
+<p>V1에는 이런 플래그 체계가 없었습니다. 실험 기능은 <code>OPENCODE_EXPERIMENTAL_CODE_MODE</code>, <code>_PLAN_MODE</code>, <code>_LSP_TOOL</code>, <code>_WORKSPACES</code>, <code>_REFERENCES</code>, <code>_BACKGROUND_SUBAGENTS</code> 같은 환경 변수로 하나씩 켰고, <code>OPENCODE_EXPERIMENTAL=1</code>이 이 중 9개를 한꺼번에 켰습니다(V1 <code>core/src/flag/flag.ts</code>). V2는 이 변수들을 하나도 읽지 않습니다(17.14).</p>
+
+<h2 id="ch17-14">17.14 V1 설정 키의 자동 이전</h2>
+<table>
+<tr><th>V1</th><th>V2</th></tr>
+<tr><td><code>snapshot</code></td><td><code>snapshots</code></td></tr>
+<tr><td><code>autoupdate</code>(true/false/"notify")</td><td><code>update</code>(auto/disable/notify)</td></tr>
+<tr><td><code>autoshare: true</code></td><td><code>share: "auto"</code></td></tr>
+<tr><td><code>attachment</code> / <code>reference</code></td><td><code>media</code> / <code>references</code></td></tr>
+<tr><td><code>command</code></td><td><code>commands</code>(<code>subtask</code>→<code>subagent</code>)</td></tr>
+<tr><td><code>agent</code>, <code>mode</code></td><td><code>agents</code>(mode는 primary 에이전트로)</td></tr>
+<tr><td><code>prompt</code>, <code>disable</code>, <code>maxSteps</code>, <code>variant</code></td><td><code>system</code>, <code>disabled</code>, <code>steps</code>, <code>model#variant</code></td></tr>
+<tr><td><code>small_model</code></td><td><code>agents.title.model</code></td></tr>
+<tr><td><code>provider</code>(<code>api</code>, <code>npm</code>, <code>options.*</code>)</td><td><code>providers</code>(<code>settings</code>, <code>package</code>, <code>headers</code>, <code>body</code>, <code>compatibility</code>)</td></tr>
+<tr><td><code>tools</code> / <code>permission</code></td><td><code>permissions</code> (write/patch/apply_patch→edit, task→subagent, bash→shell)</td></tr>
+<tr><td><code>plugin</code>(<code>[name, opts]</code>)</td><td><code>plugins</code>(<code>{package, options}</code>)</td></tr>
+<tr><td><code>enabled_providers</code> / <code>disabled_providers</code></td><td><code>policies</code>(<code>provider.use</code>)</td></tr>
+<tr><td><code>mcp.&lt;name&gt;</code>(<code>enabled</code>, camelCase oauth)</td><td><code>mcp.servers</code>(<code>disabled</code>, snake_case)</td></tr>
+<tr><td><code>skills.{paths,urls}</code></td><td><code>skills[]</code></td></tr>
+</table>
+<p>무시되는 키: 최상위 <code>logLevel</code>, <code>server</code>, <code>subagent_depth</code>, <code>layout</code>; <code>experimental.</code>의 <code>disable_paste_summary</code>, <code>batch_tool</code>, <code>openTelemetry</code>, <code>primary_tools</code>, <code>continue_loop_on_deny</code>; 프로바이더 <code>id</code>, <code>whitelist</code>, <code>blacklist</code>; 모델 <code>release_date</code>, <code>attachment</code>, <code>reasoning</code>, <code>temperature</code>, <code>experimental</code>, boolean <code>interleaved</code>; 에이전트 <code>name</code>. 프로바이더 ID 변경: <code>azure-cognitive-services</code>→<code>azure</code>, <code>google-vertex-anthropic</code>→<code>google-vertex</code>. 파일은 다시 쓰지 않고 메모리에서만 정규화합니다.</p>
+<div class="box note"><b>V1에서 옮겨 올 때 놓치기 쉬운 두 가지</b>
+<ul>
+<li><b><code>subagent_depth</code>는 자동으로 옮겨지지 않습니다.</b> V1의 최상위 <code>subagent_depth</code>는 무시되고 기본값 1이 쓰입니다. 깊이를 늘려 쓰고 있었다면 <code>experimental.subagent_depth</code>로 직접 옮기십시오.</li>
+<li><b>V1의 <code>OPENCODE_EXPERIMENTAL*</code> 환경 변수는 V2에서 아무 효과가 없습니다.</b> V2 실험 기능은 <code>OPENCODE_FLAGS</code>나 <code>experimental.&lt;flag&gt;</code>로 켭니다(17.13). 파일 감시를 끄던 <code>OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER</code>도 V2에서는 <code>OPENCODE_FILEWATCHER_DISABLE</code>로 바꿔야 합니다.</li>
+</ul></div>
+
+<h2 id="ch17-15">17.15 cli.json (TUI 설정)</h2>
+<table>
+<tr><th>키</th><th>타입</th><th>기본값</th></tr>
+<tr><td><code>theme.name</code></td><td>string</td><td><code>opencode</code></td></tr>
+<tr><td><code>theme.mode</code></td><td><code>system</code>|<code>dark</code>|<code>light</code></td><td>system</td></tr>
+<tr><td><code>keybinds.&lt;name&gt;</code></td><td>바인딩</td><td>17.16</td></tr>
+<tr><td><code>plugins</code></td><td><code>(string|{package,options})[]</code></td><td>TUI 플러그인</td></tr>
+<tr><td><code>leader.timeout</code></td><td>int ms</td><td>2000</td></tr>
+<tr><td><code>scroll.speed</code> / <code>scroll.acceleration</code></td><td>≥0.001 / boolean</td><td>—</td></tr>
+<tr><td><code>attention.notifications</code> / <code>sound</code></td><td>boolean</td><td>false / false</td></tr>
+<tr><td><code>attention.volume</code></td><td>0–1</td><td>0.4</td></tr>
+<tr><td><code>attention.sound_pack</code></td><td>string</td><td><code>opencode.default</code></td></tr>
+<tr><td><code>attention.sounds.{default,question,permission,error,done,subagent_done}</code></td><td>파일 경로</td><td>—</td></tr>
+<tr><td><code>diffs.source</code></td><td><code>working</code>|<code>branch</code>|<code>committed</code>|<code>turn</code></td><td><code>branch</code></td></tr>
+<tr><td><code>diffs.wrap</code></td><td><code>word</code>|<code>none</code></td><td><code>word</code></td></tr>
+<tr><td><code>diffs.tree</code> / <code>single</code> / <code>fullscreen</code></td><td>boolean</td><td>—</td></tr>
+<tr><td><code>diffs.view</code></td><td><code>auto</code>|<code>split</code>|<code>unified</code></td><td><code>auto</code></td></tr>
+<tr><td><code>terminal.title</code></td><td>boolean</td><td>true</td></tr>
+<tr><td><code>terminal.copy</code></td><td><code>manual</code>|<code>select</code></td><td>Windows manual, 그 외 select</td></tr>
+<tr><td><code>prompt.editor</code></td><td>boolean</td><td>true(활성 에디터 파일·선택 포함)</td></tr>
+<tr><td><code>prompt.paste</code></td><td><code>compact</code>|<code>full</code></td><td>compact</td></tr>
+<tr><td><code>prompt.image_preview</code></td><td>boolean</td><td>—</td></tr>
+<tr><td><code>session.sidebar</code></td><td><code>auto</code>|<code>hide</code></td><td>auto</td></tr>
+<tr><td><code>session.scrollbar</code></td><td>boolean</td><td>false</td></tr>
+<tr><td><code>session.submit_scroll</code></td><td><code>bottom</code>|<code>keep</code></td><td>bottom</td></tr>
+<tr><td><code>session.thinking</code></td><td><code>show</code>|<code>hide</code></td><td>hide</td></tr>
+<tr><td><code>session.grouping</code></td><td><code>auto</code>|<code>none</code></td><td>auto</td></tr>
+<tr><td><code>session.verbosity</code></td><td><code>low</code>|<code>medium</code>|<code>high</code></td><td><b>low</b>(2.3.0부터)</td></tr>
+<tr><td><code>session.image_preview</code></td><td>boolean</td><td>false</td></tr>
+<tr><td><code>session.tps</code></td><td>boolean</td><td>true</td></tr>
+<tr><td><code>session.markdown</code></td><td><code>source</code>|<code>rendered</code></td><td>rendered</td></tr>
+<tr><td><code>session.new_location</code></td><td><code>launch</code>|<code>inherit</code></td><td>launch</td></tr>
+<tr><td><code>session.permissions</code></td><td><code>prompt</code>|<code>autoaccept</code></td><td>prompt</td></tr>
+<tr><td><code>tabs.mode</code></td><td><code>auto</code>|<code>on</code>|<code>off</code></td><td>auto(<code>HERDR_ENV=1</code>이면 off)</td></tr>
+<tr><td><code>tabs.enabled</code></td><td>boolean</td><td>레거시</td></tr>
+<tr><td><code>tabs.scope</code></td><td><code>global</code>|<code>cwd</code></td><td>cwd</td></tr>
+<tr><td><code>tabs.layout</code></td><td><code>horizontal</code>|<code>vertical</code></td><td>horizontal</td></tr>
+<tr><td><code>tabs.indicators</code></td><td><code>status</code>|<code>numbers</code></td><td>status</td></tr>
+<tr><td><code>mini.thinking</code> / <code>tools</code> / <code>shell_output</code> / <code>turn_summary</code> / <code>footer</code> / <code>splash</code></td><td>show|hide</td><td>show / hide / hide / show / show / show</td></tr>
+<tr><td><code>mini.work_spinner</code></td><td>block-soft-slide, block-soft-sweep, block-low-comet, block-low-duet, block-shuttle, block-bridge, block-squeeze, small-toggle, square-toggle, grow-shrink, quadrant-orbit, crosshatch, density-wave, seed</td><td>block-soft-slide</td></tr>
+<tr><td><code>mini.mono</code> / <code>mini.replay</code></td><td>boolean</td><td>false / true</td></tr>
+<tr><td><code>mini.replay_limit</code></td><td>int&gt;0</td><td>200</td></tr>
+<tr><td><code>debug.devtools</code></td><td>boolean</td><td>local 채널에서만 켜짐</td></tr>
+<tr><td><code>debug.timing</code></td><td>boolean</td><td>false</td></tr>
+<tr><td><code>debug.turn_tokens</code></td><td>boolean|<code>"verbose"</code></td><td>false</td></tr>
+<tr><td><code>experimental</code></td><td>Record&lt;string,bool&gt;</td><td>알려진 키: <code>new-designs</code>(새 TUI 디자인 미리보기), <code>client-mcp</code>(에이전트가 이 TUI에 터미널을 열게 함, 서버 지원 필요). V1에는 없음</td></tr>
+<tr><td><code>animations</code> / <code>mouse</code></td><td>boolean</td><td>true / true</td></tr>
+<tr><td><code>highlights</code></td><td>boolean</td><td>업데이트 후 릴리스 하이라이트</td></tr>
+<tr><td><code>cursor.style</code></td><td><code>block</code>|<code>underline</code>|<code>line</code>|<code>default</code></td><td>block</td></tr>
+<tr><td><code>cursor.blinking</code></td><td>boolean</td><td>true</td></tr>
+</table>
+<p>내장 테마: aura, ayu, carbonfox, catppuccin(-frappe/-macchiato), cobalt2, cursor, dracula, everforest, flexoki, github, gruvbox, kanagawa, lucent-orng, material, matrix, mercury, monokai, nightowl, nord, one-dark, opencode, orng, osaka-jade, palenight, rosepine, solarized, synthwave84, tokyonight, v2, vercel, vesper, zenburn.</p>
+<p>환경 변수 <code>OPENCODE_CLI_CONFIG_CONTENT</code>가 파일 위에 깊은 병합됩니다. 레거시 <code>terminal.copy_on_select</code>는 <code>terminal.copy</code>로, <code>tabs.enabled</code>는 <code>tabs.mode</code>로 이전됩니다.</p>
+<p><b>데스크톱·웹 앱의 실험 기능</b>은 설정 파일이 아니라 앱 화면의 설정 → Experimental 탭에 있고, 값은 앱 저장소에 저장됩니다(<code>packages/app/src/settings/experimental/experimental.tsx</code>). V1에는 없던 항목들입니다.</p>
+<table>
+<tr><th>항목</th><th>내용</th><th>기본값</th></tr>
+<tr><td>Organize vertical sidebar</td><td>사이드바의 세션 정렬 방식(Recent, Projects, One list, Customize). 세로 탭에서만 적용</td><td>One list</td></tr>
+<tr><td>New icons</td><td>새 아이콘 세트 미리보기</td><td>꺼짐</td></tr>
+<tr><td>Fold long messages</td><td>12줄이 넘는 내 메시지를 "Read more" 뒤로 접기</td><td>꺼짐</td></tr>
+<tr><td>New timeline</td><td>에이전트가 한 일을 묶어 보여 주는 새 세션 타임라인</td><td>꺼짐</td></tr>
+<tr><td>New question UI</td><td>키보드 중심의 새 질문 창</td><td>꺼짐</td></tr>
+</table>
+
+<div class="box use" id="use-settings"><b>이렇게 씁니다 — 화면 설정은 대화상자에서: /settings · /themes</b>
+<p><code>cli.json</code>을 손으로 고쳐도 되지만, 대부분은 <code>/settings</code>에서 바로 바꿀 수 있습니다. 약 37개 항목(테마, 색상 모드, 새 세션 위치, 권한, 탭 모드와 범위, 마우스, 알림, 릴리스 하이라이트 등)이 검색 가능한 목록으로 나오고, <code>←</code>/<code>→</code>(또는 Enter)로 값을 바꾸면 <b>즉시 저장</b>됩니다.</p>
+<p><b>예 — 탭을 끄고 싶다.</b> <code>/settings</code>에서 "tabs"를 검색해 "Tabs Mode"를 <code>off</code>로 바꿉니다. 이후 <code>/clear</code>는 <code>/new</code>와 똑같이 동작합니다(7.2절).</p>
+<p><code>/themes</code>는 테마 목록을 열고, 위아래로 움직이는 동안 <b>실시간 미리보기</b>를 보여 줍니다. 필터를 치면 첫 번째 일치 테마가 바로 적용되고, Enter로 확정합니다. 확정하지 않고 닫으면 원래 테마로 돌아갑니다.</p>
+</div>
+
+<h2 id="ch17-16">17.16 키바인드 전체 목록</h2>
+<p>값 형식: <code>false</code>, <code>"none"</code>, <code>"ctrl+x,&lt;leader&gt;q"</code> 같은 문자열, <code>{name, ctrl, shift, meta, super, hyper}</code> 객체, <code>{key, event, preventDefault, fallthrough}</code> 객체, 또는 이들의 배열. 알 수 없는 이름은 오류입니다. 리더 키 기본값은 <code>ctrl+x</code>입니다. 아래 표는 <code>packages/tui/src/config/keybind.ts</code>의 <code>Definitions</code>에서 그대로 생성했습니다(245개). 일시 중단을 지원하지 않는 환경에서는 <code>terminal.suspend</code>가 꺼지고 <code>ctrl+z</code>가 <code>input.undo</code>에 추가됩니다.</p>
+<!--KEYBINDS-->
+
+<h2 id="ch17-17">17.17 service.json (서비스 설정)</h2>
+<p>설정 파일은 <code>~/.config/opencode/service.json</code>, 등록 파일은 <code>~/.local/state/opencode/service.json</code>으로 이름은 같지만 위치와 역할이 다릅니다(<code>cli/src/services/service-config.ts</code>). 채널이 <code>latest</code>·<code>dev</code>·<code>beta</code>·<code>next</code>이면 두 파일 모두 <code>service.json</code>을 공유하고, <code>local</code>과 그 밖의 채널은 <code>service-&lt;channel&gt;.json</code>을 씁니다.</p>
+<table>
+<tr><th>키</th><th>설명</th></tr>
+<tr><td><code>disabled</code></td><td>백그라운드 서비스 끄기(TUI가 전용 서버 사용)</td></tr>
+<tr><td><code>hostname</code></td><td>바인드 호스트</td></tr>
+<tr><td><code>port</code></td><td>공유 채널 49374(0xC0DE), local 49375(0xC0DF). Windows에서는 0x7000 블록으로 옮겨 각각 28894(0x70DE), 28895(0x70DF). 그 밖의 채널은 채널 이름 해시로 결정</td></tr>
+<tr><td><code>password</code></td><td>서버 비밀번호(없으면 32바이트 랜덤 생성·저장)</td></tr>
+<tr><td><code>cors</code></td><td>추가 허용 출처</td></tr>
+<tr><td><code>env.&lt;NAME&gt;</code></td><td>서비스 환경 변수(<code>XDG_STATE_HOME</code>은 무시)</td></tr>
+<tr><td><code>remote.route</code>, <code>remoteAccepted</code></td><td>원격 접근 시 자동 설정</td></tr>
+</table>
+
+<h2 id="ch17-18">17.18 환경 변수</h2>
+<p>환경 변수는 설정에 들어오는 길이 <b>두 가지</b>입니다.</p>
+<ul>
+<li><b>설정 문서가 되는 것</b>: <code>OPENCODE_CONFIG_CONTENT</code>(opencode.json 전체), <code>OPENCODE_CLI_CONFIG_CONTENT</code>(cli.json 전체), 그리고 값 자리의 <code>{env:…}</code>. 그림 17-2의 공통 경로를 지나므로 파일과 완전히 호환되고, 우선순위는 목록 속 자리가 정합니다(17.2절).</li>
+<li><b>기능이 직접 읽는 것</b>: 나머지 <code>OPENCODE_*</code> 변수 대부분. 설정 문서가 되지 않고, 각 모듈이 <code>process.env</code>를 그 자리에서 읽습니다. 그래서 대응하는 설정 키가 있어도 <b>어느 쪽이 이기는지가 변수마다 다릅니다</b>.</li>
+</ul>
+<table>
+<tr><th>설정 키</th><th>대응 환경 변수</th><th>어느 쪽이 이기나</th></tr>
+<tr><td><code>experimental.&lt;flag&gt;</code>, <code>experimental.all_flags</code></td><td><code>OPENCODE_FLAGS</code></td><td><b>환경 변수</b>. 설정을 보기 전에 먼저 확인(<code>flag.ts</code>)</td></tr>
+<tr><td><code>update: "disable"</code></td><td><code>OPENCODE_DISABLE_AUTOUPDATE=1</code></td><td><b>환경 변수</b>. 있으면 설정을 보지 않고 업데이트 확인을 건너뜀(<code>cli/src/services/updater.ts</code>)</td></tr>
+<tr><td><code>shell</code></td><td><code>SHELL</code> / <code>COMSPEC</code></td><td><b>설정</b>. 환경 변수는 <code>shell</code>이 없을 때의 기본값(<code>shell/select.ts</code>)</td></tr>
+<tr><td><code>providers.&lt;id&gt;.settings.apiKey</code></td><td>프로바이더별 키 변수(아래 "모델과 프로바이더"), OpenCode는 <code>OPENCODE_API_KEY</code></td><td>키를 파일에 적지 않는 대안. 둘 중 하나만 있으면 됨</td></tr>
+<tr><td><code>cli.json</code>의 <code>tabs.mode: "auto"</code></td><td><code>HERDR_ENV=1</code></td><td><b>설정</b>. <code>auto</code>일 때만 탭을 끄고, <code>on</code>/<code>off</code>면 무시</td></tr>
+<tr><td>(V1의 <code>logLevel</code>)</td><td><code>OPENCODE_LOG_LEVEL</code></td><td>V2는 설정 키를 무시하므로(17.14) <b>환경 변수로만</b> 정함</td></tr>
+</table>
+<p>이름이 비슷해도 대체되지 않는 것이 있습니다. <code>OPENCODE_PASSWORD</code>는 직접 띄운 서버와 <code>--server</code> 접속에만 쓰이고, 백그라운드 서비스는 <code>service.json</code>의 <code>password</code>만 읽습니다(<code>cli/src/server-process.ts</code>). 파일 감시 끄기(<code>OPENCODE_FILEWATCHER_DISABLE</code>), 프로젝트 설정 끄기(<code>OPENCODE_DISABLE_PROJECT_CONFIG</code>), 카탈로그 경로(<code>OPENCODE_MODELS_URL</code>/<code>_PATH</code>)처럼 대응하는 설정 키가 없어 환경 변수로만 되는 것도 많습니다.</p>
+<h3>설정과 경로</h3>
+<table>
+<tr><th>변수</th><th>설명</th></tr>
+<tr><td><code>OPENCODE_CONFIG</code></td><td>명시 설정 파일</td></tr>
+<tr><td><code>OPENCODE_CONFIG_CONTENT</code></td><td>인라인 설정 JSON(높은 우선순위)</td></tr>
+<tr><td><code>OPENCODE_CONFIG_DIR</code></td><td>전역 설정 디렉터리 대체(TUI 테마 포함)</td></tr>
+<tr><td><code>OPENCODE_CONFIG_PROJECT_DISABLE</code> / <code>OPENCODE_DISABLE_PROJECT_CONFIG</code></td><td>프로젝트 설정과 프로젝트 AGENTS.md 끄기</td></tr>
+<tr><td><code>OPENCODE_DISABLE_CLAUDE_CODE</code> / <code>OPENCODE_DISABLE_CLAUDE_CODE_SKILLS</code></td><td><code>.claude</code> 읽지 않기</td></tr>
+<tr><td><code>OPENCODE_CLI_CONFIG_CONTENT</code></td><td>인라인 <code>cli.json</code> 재정의</td></tr>
+<tr><td><code>OPENCODE_FLAGS</code></td><td>기능 플래그(예: <code>schedules,-media_blob</code>, <code>all</code>)</td></tr>
+<tr><td><code>XDG_CONFIG_HOME</code> / <code>XDG_DATA_HOME</code> / <code>XDG_CACHE_HOME</code> / <code>XDG_STATE_HOME</code></td><td>기본 디렉터리</td></tr>
+<tr><td><code>OPENCODE_DB</code></td><td>데이터베이스 파일(<code>:memory:</code> 허용)</td></tr>
+<tr><td><code>OPENCODE_DISABLE_CHANNEL_DB</code></td><td>채널별 DB 사용 안 함</td></tr>
+<tr><td><code>OPENCODE_TEST_HOME</code></td><td>홈 디렉터리 재정의</td></tr>
+<tr><td><code>ProgramData</code></td><td>Windows 시스템 설정 디렉터리</td></tr>
+</table>
+<h3>서버와 인증</h3>
+<table>
+<tr><th>변수</th><th>설명</th></tr>
+<tr><td><code>OPENCODE_PASSWORD</code>(구 <code>OPENCODE_SERVER_PASSWORD</code>)</td><td>서버 비밀번호</td></tr>
+<tr><td><code>OPENCODE_CLIENT</code></td><td>클라이언트 이름(<code>acp</code>, <code>desktop</code>)</td></tr>
+<tr><td><code>OPENCODE_SIMULATE</code></td><td>시뮬레이션 모드</td></tr>
+<tr><td><code>NO_PROXY</code> / <code>no_proxy</code></td><td>둘 다 읽으며 <code>127.0.0.1,localhost,::1</code>을 자동 추가</td></tr>
+<tr><td><code>OPENCODE_SSH_ASKPASS_PORT</code></td><td>내부 전달용(SSH askpass 보조 프로세스). 사용자 설정 아님</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> / <code>_HEADERS</code> / <code>OTEL_RESOURCE_ATTRIBUTES</code></td><td>텔레메트리 내보내기</td></tr>
+</table>
+<h3>모델과 프로바이더</h3>
+<table>
+<tr><th>변수</th><th>설명</th></tr>
+<tr><td><code>OPENCODE_MODELS_URL</code></td><td>models.dev 미러(기본 <code>https://models.opencode.ai</code>)</td></tr>
+<tr><td><code>OPENCODE_MODELS_PATH</code></td><td>로컬 카탈로그 파일</td></tr>
+<tr><td><code>OPENCODE_DISABLE_MODELS_FETCH</code></td><td>카탈로그 가져오지 않기</td></tr>
+<tr><td><code>OPENCODE_DISABLE_FREE_MODELS</code></td><td>무료 모델 숨김</td></tr>
+<tr><td><code>OPENCODE_API_KEY</code></td><td>OpenCode 프로바이더 키</td></tr>
+<tr><td><code>OPENCODE_CLAUDE_PATH</code></td><td>claude-agent 프로바이더용 Claude CLI 경로</td></tr>
+<tr><td><code>OPENCODE_GITLAB_AUTH_CLIENT_ID</code></td><td>GitLab OAuth 클라이언트 ID</td></tr>
+<tr><td>프로바이더별</td><td>각 프로바이더 <code>env</code> 목록. 예: <code>ANTHROPIC_API_KEY</code>, <code>AWS_REGION</code>, <code>AWS_BEARER_TOKEN_BEDROCK</code>, <code>GOOGLE_VERTEX_PROJECT</code>/<code>LOCATION</code>, <code>GOOGLE_CLOUD_PROJECT</code>, <code>AZURE_RESOURCE_NAME</code>, <code>CLOUDFLARE_ACCOUNT_ID</code>/<code>GATEWAY_ID</code>, <code>GITLAB_TOKEN</code>/<code>INSTANCE_URL</code>, <code>DATABRICKS_HOST</code>, <code>SNOWFLAKE_*</code>, <code>AICORE_*</code>, <code>MODAL_PROXY_TOKEN</code></td></tr>
+</table>
+<h3>런타임 동작</h3>
+<table>
+<tr><th>변수</th><th>설명</th></tr>
+<tr><td><code>OPENCODE_DISABLE_AUTOUPDATE</code></td><td>자동 업데이트 끄기</td></tr>
+<tr><td><code>OPENCODE_FILEWATCHER_DISABLE</code> / <code>OPENCODE_DISABLE_FILEWATCHER</code></td><td>파일 감시 끄기</td></tr>
+<tr><td><code>OPENCODE_DISABLE_FFF</code></td><td>fff 검색 백엔드 끄기(Windows는 기본 꺼짐)</td></tr>
+<tr><td><code>OPENCODE_GIT_BASH_PATH</code></td><td>Windows Git Bash 경로</td></tr>
+<tr><td><code>OPENCODE_REPO_CLONE_GITHUB_BASE_URL</code></td><td>references용 GitHub 클론 기본 URL</td></tr>
+<tr><td><code>SHELL</code> / <code>COMSPEC</code></td><td>기본 셸</td></tr>
+<tr><td><code>VISUAL</code> / <code>EDITOR</code></td><td>외부 편집기</td></tr>
+<tr><td><code>GIT_CONFIG_GLOBAL</code></td><td>Git 전역 설정</td></tr>
+<tr><td><code>OPENCODE_PRINT_LOGS</code> / <code>OPENCODE_LOG_LEVEL</code></td><td>stderr 로그 출력 / 로그 수준</td></tr>
+<tr><td><code>OPENCODE_PTY_BIN</code>, <code>OPENCODE_NODE_PTY_PATH</code>, <code>OPENCODE_PARCEL_WATCHER_PATH</code>, <code>OPENCODE_PHOTON_WASM_PATH</code>, <code>OPENCODE_FFF_FFI_PATH</code>, <code>OPENCODE_NODE_ASSETS_DIR</code></td><td>네이티브 바이너리·자산 경로</td></tr>
+<tr><td><code>OPENCODE_EDITOR_SSE_PORT</code> / <code>CLAUDE_CODE_SSE_PORT</code></td><td>에디터 통합 포트</td></tr>
+<tr><td><code>OPENCODE_ZED_DB</code></td><td>Zed 통합 DB 경로</td></tr>
+<tr><td><code>OPENCODE_PTY_HANDOFF</code></td><td>PTY 핸드오프 티켓(서버 내부 전달)</td></tr>
+</table>
+<h3>TUI와 디버깅</h3>
+<table>
+<tr><th>변수</th><th>설명</th></tr>
+<tr><td><code>HERDR_ENV=1</code></td><td>탭 auto 모드에서 탭 끔</td></tr>
+<tr><td><code>OPENCODE_SHOW_TTFD</code></td><td>첫 화면까지 시간 표시</td></tr>
+<tr><td><code>OPENCODE_DIRECT_TRACE</code></td><td>mini 호스트 추적</td></tr>
+<tr><td><code>OPENCODE_FAST_BOOT</code></td><td>초기 로딩 화면 생략</td></tr>
+<tr><td><code>OPENCODE_ROUTE</code></td><td>초기 TUI 라우트(JSON)</td></tr>
+<tr><td><code>OPENCODE_DRIVE</code> / <code>OPENCODE_DRIVE_RENDERER</code></td><td>시뮬레이션 드라이버</td></tr>
+<tr><td><code>OPENCODE_STORY</code></td><td>TUI를 스토리북 플러그인으로 시작. <code>1</code>이면 목록, 그 밖의 값이면 해당 스토리(<code>tui/src/app.tsx</code>)</td></tr>
+</table>
+<h3>OpenCode가 자식 프로세스에 설정하는 변수</h3>
+<p>PTY·셸: <code>OPENCODE_TERMINAL=1</code>. shell 도구: <code>AGENT=1</code>, <code>OPENCODE=1</code>, <code>AI_AGENT=opencode</code>, <code>OPENCODE_SESSION_ID</code>. 워크트리 시작 명령: <code>OPENCODE_WORKTREE_BASE</code>(원본 디렉터리), <code>OPENCODE_WORKTREE_PATH</code>(새 워크트리, <code>core/src/worktree.ts</code>). 빌드 상수(<code>OPENCODE_CHANNEL</code>, <code>OPENCODE_VERSION</code>, <code>OPENCODE_LOCAL</code> 등)는 사용자 설정이 아닙니다.</p>
+</section>

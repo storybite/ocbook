@@ -1,0 +1,99 @@
+<section class="chapter" id="ch01">
+<h1><span class="num">1장</span> 들어가며 — 코딩 에이전트 하네스란</h1>
+<p class="lead">이 책은 OpenCode V2(v2.3.0, 2026년 11월 13일 출시)를 "어떻게 쓰는가"가 아니라 "왜 이렇게 만들어졌는가"의 관점에서 해부합니다. 1장에서는 책 전체를 꿰는 개념인 <b>에이전트 하네스</b>를 정의하고, 이 책을 읽는 방법을 안내합니다.</p>
+
+<h2 id="ch01-1">1.1 LLM은 판단하고, 하네스는 행동한다</h2>
+<p>LLM은 텍스트를 받아 텍스트를 내놓을 뿐입니다. 파일을 읽지도, 명령을 실행하지도, 어제 한 일을 기억하지도 못합니다. "로그인 오류를 찾아 고치고 테스트까지 돌려 줘"라는 요청을 실제 작업으로 바꾸려면 모델 바깥에서 다음 일을 해 줄 프로그램이 필요합니다.</p>
+<ul>
+<li>모델이 볼 컨텍스트(대화, 규칙, 도구 설명, 환경)를 조립합니다.</li>
+<li>모델이 "grep을 실행하라"고 하면 권한을 확인하고 실제로 실행합니다.</li>
+<li>결과를 다시 모델에게 보여 주고, 끝날 때까지 반복합니다.</li>
+<li>이 모든 과정을 기록하고, 끊기면 이어서 하고, 잘못되면 되돌립니다.</li>
+</ul>
+<p>이 프로그램을 <b>하네스(harness)</b>라고 부릅니다. 말에 채우는 마구처럼, 모델의 힘을 실제 일로 연결하는 장치입니다. OpenCode의 기본 시스템 프롬프트도 스스로를 "a coding agent harness"라고 소개합니다.</p>
+<div class="mermaid">
+flowchart LR
+  U(["사용자"]) -- "요청" --> H
+  subgraph H["하네스 (OpenCode)"]
+    C["컨텍스트 조립"] --> L["LLM 호출"]
+    L --> D{"도구 호출?"}
+    D -- 예 --> P["권한 확인"] --> X["도구 실행"] --> R["결과 기록"] --> C
+    D -- 아니오 --> F["응답 반환"]
+  end
+  L <--> M[("LLM<br/>판단")]
+  X <--> W[("파일·셸·웹<br/>행동")]
+  F --> U
+</div>
+<p class="cap">그림 1-1 하네스의 기본 루프 — 판단은 모델, 행동은 프로그램</p>
+
+<h2 id="ch01-2">1.2 쉬운 루프, 어려운 하네스</h2>
+<p>그림 1-1의 루프는 수십 줄이면 짤 수 있습니다. 그런데 왜 OpenCode V2는 수십 개 패키지, 수천 개 파일이 필요할까요? 실제 사용에서 터지는 문제들 때문입니다.</p>
+<table>
+<tr><th>현실의 문제</th><th>V2의 답</th><th>다루는 장</th></tr>
+<tr><td>30분짜리 작업 중 터미널을 닫으면?</td><td>엔진을 백그라운드 서버로 분리</td><td>4장</td></tr>
+<tr><td>작업 중 서버가 죽거나 업그레이드되면?</td><td>이벤트 소싱 + 쓰기 선행 클레임 + 재개</td><td>6·7장</td></tr>
+<tr><td>일하는 에이전트에게 말을 걸고 싶다면?</td><td>inbox의 steer/queue</td><td>7장</td></tr>
+<tr><td>대화가 컨텍스트 창을 넘으면?</td><td>체크포인트 압축</td><td>9장</td></tr>
+<tr><td>매 스텝 같은 내용을 보내는 비용은?</td><td>프롬프트 캐시 중심 설계</td><td>9장</td></tr>
+<tr><td>MCP 도구가 300개라면?</td><td>Code Mode</td><td>10장</td></tr>
+<tr><td><code>rm -rf</code>를 막으려면?</td><td>순서 있는 권한 규칙 + 정책</td><td>11장</td></tr>
+<tr><td>여러 하위 작업을 동시에?</td><td>백그라운드 서브에이전트</td><td>12장</td></tr>
+<tr><td>회사마다 다른 요구?</td><td>재생 가능한 변환 기반 플러그인</td><td>15장</td></tr>
+</table>
+<p>이 책의 각 장은 이 표의 한 줄을 깊이 파고듭니다. 그리고 매번 같은 질문을 던집니다. <b>"이 설계가 아니면 무엇이 깨지는가?"</b></p>
+
+<h2 id="ch01-3">1.3 OpenCode V2를 한 문장으로</h2>
+<div class="box note"><b>한 문장 요약</b>
+OpenCode V2는 <b>SQLite 이벤트 로그 위에서</b>, <b>세션마다 하나의 실행 파이버</b>가 <b>inbox에서 입력을 승격하며</b> <b>스텝마다 이력을 다시 읽어 LLM을 한 번씩 호출</b>하고, 그 결과를 <b>SSE로 여러 클라이언트에 뿌리는</b>, <b>Effect로 쓰인 백그라운드 서버</b>입니다.</div>
+<div class="mermaid">
+flowchart TB
+  C1["TUI"] & C2["데스크톱"] & C3["웹"] & C4["SDK/외부"] --> S["서버 (HTTP + SSE)"]
+  S --> I["Inbox: 영속 접수"]
+  I --> E["Execution: 세션당 1 파이버, 클레임"]
+  E --> R["Runner: 스텝 = llm.stream 1회"]
+  R --> T["도구 / Code Mode / 서브에이전트"]
+  R --> B[("Bus → SQLite 이벤트 로그")]
+  B -- "투영" --> V["메시지·세션 읽기 모델"]
+  B -- "SSE" --> S
+</div>
+<p class="cap">그림 1-2 V2 전체 구조 한눈에 보기</p>
+
+<h2 id="ch01-4">1.4 이 책의 구성</h2>
+<table>
+<tr><th>부</th><th>장</th><th>내용</th></tr>
+<tr><td rowspan="2">I. 배경</td><td>1장</td><td>하네스 개념, 책 안내</td></tr>
+<tr><td>2장</td><td>1.x에서 2.x로: 무엇이 왜 바뀌었나</td></tr>
+<tr><td rowspan="4">II. 뼈대</td><td>3장</td><td>모노레포와 계층 아키텍처</td></tr>
+<tr><td>4장</td><td>클라이언트와 서버의 분리</td></tr>
+<tr><td>5장</td><td>Effect 서비스 그래프와 Location</td></tr>
+<tr><td>6장</td><td>이벤트 소싱과 저장소</td></tr>
+<tr><td rowspan="3">III. 엔진</td><td>7장</td><td>세션 엔진 I: 접수와 실행</td></tr>
+<tr><td>8장</td><td>세션 엔진 II: 에이전트 루프</td></tr>
+<tr><td>9장</td><td>컨텍스트 엔지니어링: 프롬프트·지침·압축</td></tr>
+<tr><td rowspan="2">IV. 행동</td><td>10장</td><td>도구 체계와 Code Mode</td></tr>
+<tr><td>11장</td><td>권한·셸·파일 편집·스냅숏</td></tr>
+<tr><td rowspan="5">V. 확장</td><td>12장</td><td>에이전트와 서브에이전트</td></tr>
+<tr><td>13장</td><td>스킬·명령·지침 파일</td></tr>
+<tr><td>14장</td><td>MCP: 외부 도구와 자료 연결</td></tr>
+<tr><td>15장</td><td>플러그인과 훅: 엔진을 넓히고 끼어들기</td></tr>
+<tr><td>16장</td><td>프로바이더·모델·LLM 계층</td></tr>
+<tr><td rowspan="3">VI. 실전</td><td>17장</td><td>설정 총람</td></tr>
+<tr><td>18장</td><td>CLI·클라이언트·SDK로 만들기</td></tr>
+<tr><td>19장</td><td>소스 읽기 로드맵과 참고 자료</td></tr>
+</table>
+<div class="box note"><b>읽는 순서 제안</b>
+처음이라면 1 → 2 → 3 → 7 → 8 → 9 순서로 엔진을 먼저 이해하십시오. ChatGPT 원 답변의 조언대로 "실행 엔진(이 책의 7~9장)을 먼저 이해하면 나머지 구조가 훨씬 명확해집니다." 설정을 찾는다면 17장만 펼쳐도 됩니다.</div>
+
+<div class="box use" id="use-guide"><b>이렇게 씁니다 — 이 표지를 찾으십시오</b>
+<p>이 책은 원리를 설명한 뒤, 그 원리에서 나오는 <b>실제 사용법</b>을 이 보라색 상자에 담았습니다. 목차에서는 사용법이 있는 절 옆에 🛠 표시가 붙습니다. 명령을 이름으로 찾고 싶다면 <a href="#appA">부록 A 슬래시 명령 총람</a>에서 짧은 설명을 보고 링크를 따라 해당 상자로 가면 됩니다. TUI에서 <code>ctrl+x</code>는 리더 키로, 이 책에서 <code>ctrl+x n</code>은 "<code>ctrl+x</code>를 누르고 뗀 뒤 <code>n</code>"을 뜻합니다.</p>
+</div>
+
+<h2 id="ch01-5">1.5 근거와 표기 규칙</h2>
+<ul>
+<li><b>기준 소스</b>: <code>D:\workspace\cc\opencode\v2\repo</code>(v2.3.0, 커밋 <code>a6b15d33da release: v2.3.0</code>)와 비교용 <code>D:\workspace\cc\opencode\v1\repo</code>(1.19.5). 본문의 파일 경로는 저장소 루트 기준이며, 별도 표기가 없으면 <code>packages/core/src/</code> 아래입니다.</li>
+<li><b>명세</b>: <code>specs/v2/*.md</code>와 루트·패키지별 <code>AGENTS.md</code>를 설계 의도의 근거로 씁니다.</li>
+<li><b>코드가 명세보다 우선</b>합니다. 둘이 다르면 <span style="color:var(--warn-line)">노란 상자</span>로 표시했습니다.</li>
+<li>상자 표기: <span style="color:var(--why-line)">초록 "왜"</span>는 설계 원리, <span style="color:var(--note-line)">파란 "참고"</span>는 보충 설명, <span style="color:var(--warn-line)">노란 "주의"</span>는 함정이나 불일치입니다.</li>
+<li>코드 발췌는 이해를 돕기 위한 짧은 인용이며, 일부는 생략 표시(<code>...</code>)와 함께 요약했습니다.</li>
+</ul>
+</section>

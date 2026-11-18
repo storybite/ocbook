@@ -1,0 +1,386 @@
+<section class="chapter" id="ch09">
+<h1><span class="num">9장</span> 컨텍스트 엔지니어링 — 프롬프트 조립, 지침, 압축</h1>
+<p class="lead">모델이 보는 것은 결국 한 번의 요청입니다. 이 장은 그 요청이 어떻게 만들어지는지, 그리고 대화가 길어질 때 무엇을 남기고 무엇을 요약하는지를 다룹니다. 모든 설계를 관통하는 키워드는 <b>프롬프트 캐시</b>입니다.</p>
+
+<h2 id="ch09-1">9.1 왜 캐시가 설계를 지배하는가</h2>
+<p>LLM 프로바이더는 요청의 앞부분(접두, prefix)이 이전 요청과 바이트 단위로 같으면 그 부분을 캐시에서 읽어 비용과 지연을 크게 줄여 줍니다. 에이전트는 스텝마다 거의 같은 대화를 반복 전송하므로 캐시 적중 여부가 비용을 몇 배씩 좌우합니다. 그래서 V2는 다음 원칙을 지킵니다.</p>
+<ul>
+<li>자주 바뀌지 않는 것을 앞에, 자주 바뀌는 것을 뒤에 둡니다.</li>
+<li>시스템 프롬프트는 한 "에포크" 동안 바이트 단위로 고정합니다.</li>
+<li>바뀐 내용은 앞부분을 고치지 않고 대화 중간에 "변경 알림"으로 덧붙입니다.</li>
+<li>도구 정의 순서와 JSON Schema도 안정적으로 유지합니다(이름순 정렬, 정수 범위 제거 등).</li>
+</ul>
+<div class="mermaid">
+flowchart LR
+  subgraph REQ["요청 한 개의 구조"]
+    direction LR
+    T["tools<br/>(이름순, 캐시)"] --> S0["system[0]<br/>에이전트 프롬프트 or 기본 프롬프트"] --> S1["system[1]<br/>지침 베이스라인"] --> H["history<br/>체크포인트 + 이후 메시지"] --> N["새 입력"]
+  end
+  T -.- K1["거의 불변"]
+  S1 -.- K2["에포크 동안 고정"]
+  H -.- K3["뒤로만 늘어남"]
+</div>
+<p class="cap">그림 9-1 요청은 "뒤로만 자라는" 구조</p>
+
+<div class="box use" id="use-cache"><b>이렇게 씁니다 — 캐시를 깨지 않는 습관</b>
+<p>캐시는 "앞부분이 똑같을 때만" 재사용됩니다. 그래서 세션 중간에 무엇을 바꾸느냐에 따라 비용이 크게 달라집니다. 대화가 10만 토큰쯤 쌓인 세션이라면, 캐시가 깨지는 순간 그 10만 토큰을 다시 정가로 읽게 됩니다.</p>
+<table>
+<tr><th>세션 중간의 변경</th><th>캐시에 미치는 영향</th></tr>
+<tr><td>모델 바꾸기(<code>/models</code>)</td><td><b>새로 시작.</b> 프로바이더 캐시는 모델별이라 앞부분을 처음부터 다시 읽음</td></tr>
+<tr><td>같은 모델의 추론 단계만 바꾸기(<code>/variants</code>, <code>ctrl+t</code>)</td><td>Anthropic·OpenAI Responses 경로는 메시지 안의 표지로 바꿔 <b>캐시 유지</b>. 다른 경로는 요청 상단이 바뀌어 깨질 수 있음</td></tr>
+<tr><td>build ↔ plan(<code>shift+tab</code>)</td><td><b>캐시 유지.</b> 둘은 같은 기본 프롬프트와 같은 도구 목록을 쓰고, 바뀌는 것은 끝쪽에 붙는 진입·이탈 알림 한 줄뿐. 단, 두 에이전트에 다른 모델을 골라 두었다면 '모델 바꾸기'와 같음</td></tr>
+<tr><td>그 밖의 에이전트로 바꾸기(<code>/agents</code>)</td><td>시스템 프롬프트·도구 목록·모델이 다르면 앞부분이 달라져 <b>깨질 가능성이 큼</b></td></tr>
+<tr><td>폴더 이동(<code>/cd</code>)·지침 변경</td><td>기준선은 그대로, 변화만 델타로 덧붙임 → 대체로 유지(9.5절)</td></tr>
+</table>
+<p><b>그래서 이렇게 씁니다.</b></p>
+<ol>
+<li><b>모델은 세션을 시작할 때 정합니다.</b> 긴 세션 도중에 "더 센 모델로 한 번만"이 필요하면, 세션을 바꾸지 말고 같은 모델의 추론 단계(<code>ctrl+t</code>)를 올려 보십시오.</li>
+<li><b>모델을 꼭 바꿔야 한다면 먼저 줄입니다.</b> <code>/compact</code>로 이력을 체크포인트 요약으로 줄인 뒤 바꾸면 다시 읽을 양이 작습니다. 또는 <code>/new</code>로 새 세션을 시작하고 필요한 맥락만 전달합니다.</li>
+<li><b>plan과 build는 같은 모델로 둡니다.</b> 둘을 오가도 캐시가 깨지지 않는 것은 요청 앞부분을 이루는 세 가지가 같기 때문입니다.
+<ul>
+<li><b>시스템 프롬프트</b>: build와 plan 모두 자기 프롬프트를 정하지 않아 같은 기본 프롬프트를 씁니다.</li>
+<li><b>도구 목록</b>: plan은 편집을 막지만 편집 도구를 목록에서 빼지는 않습니다. 도구 목록은 "그 도구에 마지막으로 걸리는 규칙이 전부(<code>*</code>)를 막는가"만 보고 도구를 뺍니다. plan의 마지막 edit 규칙은 "계획 폴더는 허용"이라서 edit·write·patch가 목록에 남고, 실행하는 순간 권한 검사에서 막힙니다(<a href="#ch11-4">11.4절</a>). 이 점이 특히 중요합니다. 기본 프롬프트는 도구 이름 목록으로 만들어지므로, 도구가 하나라도 빠지면 프롬프트까지 달라집니다.</li>
+<li><b>모델</b>: 둘 다 모델을 지정하지 않아 세션에서 고른 모델을 그대로 씁니다. 그런데 앱은 에이전트마다 마지막 모델을 따로 기억합니다(<a href="#ch12-2">12.2절</a>). plan에 빠른 모델을 골라 두면 이 조건이 깨져서 전환할 때마다 모델 바꾸기와 같은 비용이 듭니다.</li>
+</ul>
+그러니 모델만 맞춰 두면, 계획을 다듬다가 구현하고 다시 계획으로 돌아가도 캐시 걱정이 없습니다.</li>
+</ol>
+</div>
+
+<h2 id="ch09-2">9.2 baseTranscript: 요청 조립</h2>
+<ul>
+<li><b>system[0]</b>: 에이전트가 누구이고 어떻게 일하는지 정하는 프롬프트입니다. 에이전트에 <code>system</code>이 있으면 그것을 씁니다(예: <code>explore</code>의 읽기 전용 탐색 프롬프트). 없으면 <code>SessionSystemPrompt.make(toolNames)</code>가 기본 프롬프트 <code>runner/prompt/system.txt</code>를 만듭니다. 이때 <code>toolNames</code>는 <code>${OPENCODE_TOOL_GUIDANCE}</code> 자리에 실제로 쓸 수 있는 도구(<code>shell</code>·<code>write</code>·<code>edit</code> 등)의 사용법만 골라 넣는 데 씁니다. 에이전트 프롬프트는 기본 프롬프트에 덧붙지 않고 그 자리를 <b>대체</b>합니다.</li>
+<li><b>system[1]</b>: <code>Instructions.join(initial)</code>로 만든 지침 에포크의 베이스라인입니다. 전역·프로젝트 AGENTS.md, <code>instructions</code> 파일, 스킬 목록, MCP 지침 등을 합친 내용이며 세션 첫 턴에 고정됩니다. 세션 도중 지침이 바뀌면 system[1]은 그대로 두고 대화 중간에 시스템 메시지로 알립니다. system[1]은 압축 뒤 새 에포크가 시작될 때만 다시 만듭니다.</li>
+<li><b>messages</b>: <code>toLLMMessages(history)</code>. 세션 메시지 종류별 변환은 다음과 같습니다.
+<table>
+<tr><th>세션 메시지</th><th>role</th><th>내용</th></tr>
+<tr><td>user</td><td><code>user</code></td><td>스킬 본문 + 텍스트 + 첨부</td></tr>
+<tr><td>synthetic, skill</td><td><code>user</code></td><td>메시지 텍스트</td></tr>
+<tr><td>system (지침 변경)</td><td><code>system</code></td><td><code>Message.system</code> — 대화 중간에 끼는 시스템 메시지</td></tr>
+<tr><td>shell (사용자가 직접 실행)</td><td><code>user</code></td><td>"The following shell command was executed by the user…"</td></tr>
+<tr><td>compaction</td><td><code>user</code></td><td><code>&lt;conversation-checkpoint&gt;</code> 안에 <code>&lt;summary&gt;</code>, <code>&lt;recent-context&gt;</code></td></tr>
+<tr><td>idle, agent-switched</td><td>—</td><td>보내지 않음</td></tr>
+</table>
+</li>
+</ul>
+<h3>prepare 단계(모든 요청 공통)</h3>
+<p>조립이 끝난 요청은 모델에 보내기 직전에 아래 네 단계를 거치며 다듬어집니다. 주 대화든 압축 요약이든 제목 생성이든 같은 길을 지납니다.</p>
+<ol>
+<li><b>도구 목록 다듬기</b>: 플러그인 훅이 모델에게 보낼 도구 목록을 고칠 수 있습니다. 훅에는 원본이 아니라 깊은 복사본(deep copy)을 넘기므로, 훅이 무엇을 고쳐도 여러 스텝·세션이 함께 쓰는 원본 정의는 그대로 남습니다. 훅이 할 수 있는 일은 이미 있는 도구의 이름·설명을 바꾸거나 도구를 빼는 것까지입니다. 목록에 없던 도구를 훅이 새로 끼워 넣으면 그 정의는 버립니다. 실제로 어떤 경우에 고치는지는 절 끝의 상자 '도구 목록은 왜 고칠까요?'에서 예로 봅니다.</li>
+<li><b>답변 길이 상한 정하기</b>: 모델이 이번 답변에 쓸 수 있는 출력 토큰 수를 정합니다. 기본은 모델의 출력 한도이지만, 컨텍스트 창에 남은 자리가 그보다 좁으면 남은 자리에 맞춰 줄입니다. 예를 들어 창이 200k인데 입력이 이미 190k를 차지했다면, 모델의 출력 한도가 32k라도 남은 10k 안쪽으로 줄여 요청합니다. 그래야 창이 넘치지 않습니다. 이 계산은 주 대화와 압축 요청에서만 하고, 제목·<code>generate</code> 요청은 프로바이더 기본값을 씁니다. 계산식은 아래 코드에 있습니다.</li>
+<li><b>플러그인 훅에 차례로 맡기기</b>: 먼저 요청 종류에 맞는 훅 하나가 요청을 고칩니다. 종류에 따라 <code>session.context</code>(주 대화), <code>compaction</code>(압축 요약), <code>generate</code>, <code>title</code>(제목 생성) 가운데 하나입니다. 다음으로 <code>session.model.request</code> 훅이 요청을 보낼 주소(baseURL)와 헤더를 바꿀 수 있습니다. 필요하면 더 아래에서 <code>http.request</code>/<code>response</code> 훅으로 실제 HTTP 요청·응답을, <code>experimental.ws.*</code> 훅으로 WebSocket 전송을 들여다볼 수도 있습니다.</li>
+<li><b>마지막 정리</b>: 훅이 참고할 수 있던 저장용 메타데이터를 지워 모델 쪽으로는 보내지 않습니다. 모델이 읽지 못하는 미디어(예: 텍스트 전용 모델에 보낸 이미지)는 빼 버리지 않고 "ERROR: Cannot read …"라는 글로 바꿉니다. 그러면 요청이 실패하지 않고, 모델도 그 자리에 읽지 못한 파일이 있었다는 것을 알고 사용자에게 알릴 수 있습니다. 이미지가 쌓여 총량이 너무 커지면 가장 오래된 이미지부터 지웁니다(아래 표의 25 MiB / 15 MiB).</li>
+</ol>
+<div class="mermaid">
+sequenceDiagram
+  participant R as Runner
+  participant P as prepare
+  participant H as hooks.trigger
+  participant C as 처리기들(내장·사용자)
+  participant M as 모델 API
+  R->>P: primary(input)
+  P->>P: 도구 정의 깊은 복사, 출력 한도 계산
+  P->>H: trigger(session, context, 초안)
+  loop 등록된 순서대로
+    H->>C: 초안 전달
+    C-->>H: 초안 수정 (예를 들어 Your Model 블록 추가)
+  end
+  H-->>P: 최종 초안
+  P->>P: 지어낸 도구 버림, 메타데이터 제거, 미디어 교체, 이미지 제한
+  P->>H: trigger(session, model.request, baseURL·헤더)
+  H-->>P: 바뀐 baseURL·헤더
+  P-->>R: 완성된 요청
+  R->>M: 전송 (http.request/response 훅이 있으면 이때 끼어듦)
+  M-->>R: 스트리밍 응답
+</div>
+<p class="cap">그림 9-2 주 대화 요청 하나가 prepare 단계를 지나는 순서</p>
+<p>그림은 주 대화 요청을 예로 들었습니다. 위 목록은 훅(3번)과 정리(4번)를 나눠 적었지만, 실제 코드는 요청 종류별 훅을 부른 직후에 정리를 하고 그다음에 <code>session.model.request</code> 훅을 부릅니다. 훅 지점에 등록된 처리기는 등록 순서대로 불리고, 뒤 처리기는 앞 처리기가 고친 초안을 이어받습니다. 등록된 처리기가 없으면 초안은 그대로 나갑니다.</p>
+<div class="box note"><b>'context 함수'가 아니라 '훅 지점'인 까닭 — "안녕?" 요청 하나로 보기</b>
+<p>여기서 말하는 <b>코어</b>는 서버 안에서 실제 일을 하는 엔진 본체, 곧 <code>packages/core</code> 패키지입니다(3.3절). 세션 실행, 모델 요청 조립, 도구·권한, 플러그인 관리, 저장이 모두 여기에 있고, 모델 요청을 만드는 코드는 <code>session/model-request.ts</code>입니다. 내장 플러그인도 같은 패키지(<code>packages/core/src/plugin/</code>)에 들어 있지만, 엔진에 직접 붙지 않고 사용자 플러그인과 똑같이 훅 지점에 훅(처리기)을 거는 방식으로 붙습니다.</p>
+<p>사용자가 "안녕?"이라고만 보내도 이 길을 그대로 지납니다.</p>
+<ol>
+<li>코어가 "안녕?"을 담은 요청 초안을 만듭니다. 초안에는 시스템 프롬프트, 대화, 도구 목록이 들어 있습니다.</li>
+<li>모델에 보내기 직전에 코어는 <code>trigger("session", "context", 초안)</code> 한 줄만 실행합니다. "이 초안을 고칠 처리기가 걸려 있으면 순서대로 나오라"는 뜻입니다.</li>
+<li>걸려 있는 처리기들이 등록된 순서대로 <b>같은 초안</b>을 받아 고칩니다. 예를 들어 내장 <code>IdentityPlugin</code>은 모델 이름·프로바이더 ID·모델 ID를 담은 '# Your Model' 블록을 시스템 프롬프트에 넣습니다. 그 뒤에 사용자 플러그인이 있다면 "답은 한국어로" 같은 문장을 덧붙일 수도 있습니다(설명을 위해 가정한 예입니다).</li>
+<li>처리기가 모두 끝나면 <code>trigger</code>가 다 고쳐진 초안을 코어에 돌려줍니다. 3번 예라면 '# Your Model' 블록(사용자 플러그인이 있다면 "답은 한국어로" 문장까지)이 들어간 초안입니다. 코어는 이 초안을 앞에서 본 '마지막 정리'를 거쳐 모델에 보냅니다. 걸린 처리기가 하나도 없으면 아무도 고치지 않았으므로 1번에서 만든 초안이 그대로 나갑니다.</li>
+</ol>
+<pre><code><span class="src">v2 packages/core/src/plugin/hooks.ts — trigger (요약)</span>const trigger: Interface["trigger"] = Effect.fnUntraced(function* (domain, name, event) {
+  for (const entry of callbacks.get(key(domain, name)) ?? []) {
+    ...
+    const result: Effect.Effect&lt;void, Failures[typeof domain][typeof name]&gt; = entry.callback(event)
+    yield* result
+  }
+  return event
+})</code></pre>
+<p><code>trigger(domain, name, event)</code>의 세 인자는 차례로 훅이 속한 영역(<code>aisdk</code>·<code>session</code>·<code>permission</code>·<code>shell</code>·<code>tool</code> 중 하나), 그 영역 안에서 쓰는 훅 지점의 이름, 처리기들에게 차례로 넘길 객체입니다. 코드는 <code>domain</code>과 <code>name</code>을 이어 <code>"session.context"</code> 같은 훅 지점 이름을 만들고, 그 이름으로 처리기 목록을 찾습니다. 책이 훅 지점을 <code>도메인.이름</code> 형식으로 부르는 것도 이 때문입니다. 그래서 위 코드는 이렇게 읽으면 됩니다. <code>trigger("session", "context", 초안)</code>은 <code>session.context</code> 훅 지점에 걸린 훅(처리기)들을 등록 순서대로 하나씩 실행합니다. 처리기들은 모두 같은 초안 객체를 받아 직접 고치고, <code>trigger</code>는 다 고쳐진 그 객체를 돌려줍니다.</p>
+<p>이 지점을 'context 함수'라고 부르지 않는 이유는 2번에 있습니다. 코어 안에는 초안을 고치는 정해진 함수가 없습니다. 위 코드처럼 코어는 걸려 있는 처리기를 차례로 부를 뿐이고, 실제로 고치는 함수는 모두 플러그인이 바깥에서 걸어 둔 것입니다. 몇 개가 걸려 있는지도 그때그때 달라서 0개일 수도 여러 개일 수도 있습니다. 덕분에 기능을 더할 때 코어 코드를 고칠 필요 없이 함수만 하나 더 걸면 됩니다. 이렇게 걸어 두는 함수, 곧 처리기 하나하나를 <b>훅(hook)</b>이라고 부르고, 훅을 걸 수 있도록 코어가 정해 둔 자리를 <b>훅 지점</b>이라고 부릅니다(15.4절). <code>session.context</code>는 처리기가 아니라 처리기들이 걸리는 위치, 곧 훅 지점의 이름입니다. 정리하면 코어가 정해 둔 훅 지점에 플러그인이 훅(처리기)들을 겁니다. 여기서 '훅을 건다'는 말은 실행이 아니라 <code>hook(...)</code>으로 등록한다는 뜻이고, 실제 실행은 코어가 그 지점에 이르러 <code>trigger</code>로 부르는 발동입니다. 흔히 '<code>session.context</code> 훅'이라고 줄여 부르지만, 정확히는 '<code>session.context</code> 지점에 걸린 훅들'입니다. 또 이 훅들은 6장의 Bus 이벤트에 반응해 도는 것이 아니라, 코어가 요청을 준비하다 이 지점에 이르면 직접 부릅니다. 훅이 변환·이벤트 구독과 어떻게 다른지는 15.4절에서 다룹니다.</p>
+</div>
+<pre><code><span class="src">session/model-request.ts — 출력 한도</span>export const outputLimit = (limit, inputTokens?, headroom = 0) =&gt; {
+  const requested = Math.min(limit.output &gt; 0 ? limit.output : OUTPUT_TOKEN_FALLBACK, OUTPUT_TOKEN_MAX)
+  if (inputTokens === undefined || limit.context &lt;= 0) return requested
+  const room = Math.floor(limit.context * (1 - headroom)) - inputTokens.measured
+             - Math.ceil(inputTokens.estimated * (1 + ESTIMATE_ERROR))
+  return Math.min(requested, Math.max(OUTPUT_TOKEN_MIN, room))
+}</code></pre>
+<table>
+<tr><th>상수</th><th>값</th></tr>
+<tr><td><code>OUTPUT_TOKEN_FALLBACK</code> / <code>MAX</code> / <code>MIN</code></td><td>32,000 / 256,000 / 1,024</td></tr>
+<tr><td><code>ESTIMATE_ERROR</code></td><td>0.15 (약 4글자 = 1토큰 가정의 오차 여유)</td></tr>
+<tr><td><code>WINDOW_HEADROOM</code></td><td>0.01</td></tr>
+<tr><td><code>IMAGE_BYTES_TRIGGER</code> / <code>TARGET</code></td><td>25 MiB / 15 MiB — 가장 오래된 이미지부터 제거, 자르는 지점을 단계적으로 옮겨 캐시 접두 유지</td></tr>
+</table>
+<p>"측정값(measured)"은 같은 프로바이더의 직전 응답이 보고한 토큰 수이고, "추정값(estimated)"은 그 이후 메시지의 글자 수 ÷ 4입니다. 실측과 추정을 섞어 쓰는 이유는, 프로바이더마다 토크나이저가 달라 로컬에서 정확히 셀 수 없기 때문입니다.</p>
+<div class="box why"><b>도구 목록은 왜 고칠까요? — GPT·Claude에서 grep·glob 빼기</b>
+<p>훅이 도구 목록을 고치는 것은 요청을 받을 모델에 맞춰 도구를 다듬기 위해서입니다. 내장 플러그인 <code>OptimizePlugin</code>에 그 예가 있습니다. <code>OpenAIToolsPlugin</code>과 <code>AnthropicToolsPlugin</code>은 모델 ID·패밀리에 <code>gpt</code>나 <code>claude</code>가 들어 있으면 그 요청의 도구 목록에서 전용 검색 도구 <code>grep</code>·<code>glob</code>을 뺍니다.</p>
+<pre><code><span class="src">v2 packages/core/src/plugin/optimize.ts — 도구 최적화 플러그인 (요약)</span>// Both OpenAIToolsPlugin and AnthropicToolsPlugin are disabled intentionally until we can figure out a good ux for displaying
+// heavy grep/glob usage done via shell or other mechanisms
+...
+export const AnthropicToolsPlugin = make("opencode.optimize.anthropic.tools", (model, tools) =&gt; {
+  const ids = [model.id, model.modelID, model.family].join(" ").toLowerCase()
+  if (!ids.includes("claude")) return undefined
+  delete tools.grep
+  delete tools.glob
+  return undefined
+})
+...
+export const Plugins = [OpenAIPlugin, AnthropicPlugin, KimiPlugin, ArceePlugin, MetaPlugin] as const</code></pre>
+<p>소스에 이유가 직접 적혀 있지는 않습니다. 다만 주석이 "셸 등으로 하는 grep/glob 대량 사용"을 언급하므로, GPT·Claude 모델에게서 전용 <code>grep</code>·<code>glob</code> 도구를 빼고 셸로 직접 검색하게 하려던 것으로 읽힙니다. 이 모델들이 셸 명령에 익숙해서 그쪽이 더 잘 맞는다고 본 것으로 짐작되지만, 이 부분은 소스로 확인되지 않는 추정입니다.</p>
+<p>두 플러그인은 지금 꺼져 있습니다. 주석대로, 셸로 하는 대량 검색을 화면에 잘 보여 줄 UX가 마련될 때까지 일부러 <code>Plugins</code> 목록에서 뺐습니다. 켜더라도 프롬프트 캐시는 깨지지 않습니다. 빼는 기준이 모델뿐이라 같은 모델을 쓰는 동안에는 도구 목록이 요청마다 똑같기 때문입니다.</p>
+</div>
+
+<h2 id="ch09-3">9.3 기본 시스템 프롬프트</h2>
+<p><code>runner/prompt/system.txt</code>는 짧습니다. "You are an AI agent running in OpenCode, a coding agent harness…"로 시작하며 <code># Harness</code>(GFM 출력, <code>&lt;system-reminder&gt;</code> 블록은 하네스 지시, 도구 병렬 호출), <code># Communication</code>, <code># Working in codebases</code> 세 절로 구성됩니다. <code>${OPENCODE_TOOL_GUIDANCE}</code> 자리에는 존재하는 도구에 따라 다른 문장이 들어갑니다(<code>shell</code>이 있으면 "전용 도구를 우선하라", <code>edit</code>가 있으면 <code>oldString</code> 유일성 규칙 등).</p>
+<p>모델별 프롬프트(gpt.txt, kimi.txt, trinity.txt …)는 세션 코어가 아니라 <code>plugin/optimize.ts</code> 플러그인이 붙입니다. 자체 <code>system</code>을 가진 에이전트에는 적용되지 않습니다. 비공식 감사 문서(19장)는 이 모델별 프롬프트들 사이의 불일치를 비판합니다.</p>
+
+<h2 id="ch09-4">9.4 컨텍스트 선택: 공유도 순서</h2>
+<pre><code><span class="src">session/context.ts</span>// Ordered from most to least shared across sessions so the baseline stays a
+// reusable prompt-cache prefix … then the date and environment, which vary by day and directory.
+instructions: Instructions.combine([CodeModeInstructions.make(...), loaded.mcp, loaded.references,
+  loaded.skills, loaded.discovery, loaded.builtins, loaded.entries]),</code></pre>
+<div class="mermaid">
+flowchart LR
+  A["Code Mode 카탈로그"] --> B["MCP 서버 지침"] --> C["references"] --> D["스킬 목록"] --> E["AGENTS.md"] --> F["날짜·환경"] --> G["API 지침 항목"]
+  A -.- X1["모든 세션이 공유"]
+  F -.- X2["날·디렉터리마다 다름"]
+</div>
+<p class="cap">그림 9-3 지침 베이스라인의 순서 — 가장 많이 공유되는 것부터</p>
+<p><code>select</code>는 세션의 Location이 현재 레이어와 다르면 중단하고, 에이전트를 고르고, 권한을 합치며(<code>agent ∪ session</code>), 권한으로 걸러진 도구 스냅숏과 모든 지침 소스를 동시에 읽습니다. <code>load</code>는 모델을 해석하고 이력과 에포크 초기 지침을 한 트랜잭션에서 읽습니다.</p>
+<p>그림 9-3의 <b>references</b>는 현재 프로젝트 밖에 있지만 모델이 함께 참고할 추가 디렉터리입니다. 사용자가 <code>opencode.json</code>의 <code>references.&lt;alias&gt;</code>에 직접 적습니다(17.12절). 값이 문자열이면 <code>.</code>, <code>/</code>, <code>~</code>로 시작할 때 로컬 폴더로, 그 밖에는 Git 저장소로 봅니다. 객체로 적을 때는 <code>{path, description?, hidden?}</code> 또는 <code>{repository, branch?, description?, hidden?}</code>을 씁니다. 로컬 상대 경로는 그 설정 파일이 있는 디렉터리를 기준으로 풀고, Git 저장소는 <code>~/.local/share/opencode/repos</code>에 받아 두고 매일 갱신합니다(10.7절).</p>
+<pre><code><span class="src">opencode.json</span>{
+  "references": {
+    "shared": { "path": "../shared-lib", "description": "공용 라이브러리 소스" },
+    "effect": { "repository": "Effect-TS/effect", "branch": "main", "description": "Effect 소스" }
+  }
+}</code></pre>
+<p><code>shared</code>, <code>effect</code> 같은 별칭은 사용자가 마음대로 붙이는 이름입니다. 다만 <code>/</code>·공백·백틱·쉼표가 들어간 별칭은 오류 없이 건너뜁니다. 별칭은 모델이 보는 목록의 <code>&lt;name&gt;</code>에 그대로 들어가므로, 무엇을 가리키는지 드러나는 이름이 좋습니다.</p>
+<pre><code><span class="src">v2 packages/core/src/reference/instructions.ts — ReferenceInstructions.load (요약)</span>const available = (yield* references.list())
+  .filter((reference) =&gt; reference.description !== undefined)
+  ...</code></pre>
+<div class="box warn"><b>description이 없으면 모델은 모릅니다</b>
+설정한 참조는 모두 참조 목록에 들어가지만, <code>&lt;available_references&gt;</code> 블록을 만들 때 <code>description</code>이 없는 참조는 빠집니다. 그래서 <code>"shared": "../shared-lib"</code>처럼 문자열로만 적으면 설정은 받아들여져도 모델은 그 폴더가 있는지 모릅니다. 모델에게 알리려면 객체로 적고 <code>description</code>을 붙여야 합니다.
+<p>그렇다고 description 없는 참조가 쓸모없지는 않습니다. TUI와 웹·데스크톱 입력창의 <code>@</code> 자동완성은 <code>hidden: true</code>인 참조만 빼고 모두 보여 주므로, 사용자는 <code>@별칭</code>으로 그 폴더를 직접 언급해 메시지에 붙일 수 있습니다. 정리하면 description이 있는 참조는 모델도 스스로 찾아 쓰고, 없는 참조는 사용자가 <code>@</code>로 부를 때만 쓰입니다.</p></div>
+
+<h2 id="ch09-5">9.5 InstructionState: 지침은 값의 델타</h2>
+<p>이 절의 요점은 <b>세션 도중 AGENTS.md 같은 지침이 바뀌어도 시스템 프롬프트를 다시 쓰지 않고, 바뀐 부분만 대화 중간에 시스템 메시지로 알린다</b>는 것입니다. 첫 턴의 지침은 기준값(베이스라인)이 되어 system[1]에 들어갑니다. 그 뒤에는 스텝마다 지침의 해시를 비교해, 달라졌을 때만 변경분(델타)을 그 시점의 대화에 끼워 넣습니다. 이렇게 하면 프롬프트 앞부분이 그대로 남아 캐시가 깨지지 않습니다. 압축으로 어차피 앞부분을 다시 써야 할 때 그동안의 변경을 새 기준값으로 합칩니다.</p>
+<p><code>instruction_state(session_id, epoch_start, through_seq, initial_values, current_values)</code>. 값은 <code>키 → SHA-256 해시</code> 맵이고 본문은 <code>instruction_blob</code>에 한 번만 저장됩니다.</p>
+<div class="mermaid">
+sequenceDiagram
+  participant R as Runner(매 스텝)
+  participant IS as InstructionState
+  participant H as 이력
+  R->>IS: prepare = observe + commit
+  IS->>IS: 7개 소스 동시 읽기 → 정규화 → 해시
+  alt 첫 턴
+    IS->>H: initial 커밋 (텍스트 없음) = 베이스라인
+    Note over H: system[1]로 렌더링
+  else 해시가 바뀜
+    IS->>H: session.instructions.updated{delta, text}
+    Note over H: 대화 중간 system 메시지 (얼린 텍스트)
+  else 변화 없음
+    IS-->>R: 아무것도 안 함
+  end
+  Note over IS: 압축 완료 시 advanceEpoch: current가 새 베이스라인
+</div>
+<p class="cap">그림 9-4 지침 변경의 전달</p>
+<ul>
+<li><b>둘 중 짧은 쪽으로 알립니다.</b> 세션 도중 AGENTS.md가 바뀌면 그 사실을 대화 중간에 시스템 메시지로 모델에게 알립니다. 알리는 방법은 두 가지입니다. 새 내용을 통째로 다시 싣거나(전체 교체), 어떤 줄이 빠지고 더해졌는지만 보여 주는 diff를 보내는 것입니다. OpenCode는 둘 중 더 짧은 쪽을 고릅니다. 긴 파일에서 한두 줄만 고쳤다면 diff를, 거의 전부 바꿨다면 전체 내용을 보내 토큰을 아낍니다.</li>
+<li><b>보낸 글은 완성본 그대로 보관합니다.</b> 모델에게 보낸 변경 안내문은 다 만든 글 그대로 이벤트에 저장합니다("얼린다"). 나중에 다시 만들려면 그때의 지침 파일이 있어야 하는데, 그 파일은 이미 바뀌었거나 사라졌을 수 있기 때문입니다.</li>
+<li><b>읽지 못한 파일은 처음에만 문제가 됩니다.</b> 첫 턴에 기준값을 만들 때 읽지 못한 소스가 있으면 기준값을 만들지 않고 멈춥니다. 기준값이 생긴 뒤에는 읽지 못한 소스를 건너뛰고 마지막으로 저장한 값을 그대로 씁니다.</li>
+<li><b>되돌리면 지침 기록도 되돌립니다.</b> 되돌리기(revert)로 지침 변경 메시지나 기준값의 시작점이 지워지면, 저장된 지침 상태를 지워(<code>rewind</code>) 남은 이력에 맞게 다시 만들게 합니다.</li>
+</ul>
+<div class="box why"><b>왜 시스템 프롬프트를 고치지 않고 "중간 메시지"로 알릴까요?</b>
+AGENTS.md 한 줄을 고칠 때마다 system[1]을 다시 만들면 그 뒤의 대화 전체가 캐시에서 빠집니다. 변경을 시간순 위치에 시스템 메시지로 끼우면 앞부분은 그대로라 캐시가 유지되고, 모델은 "언제 규칙이 바뀌었는지"까지 알게 됩니다. 압축으로 어차피 앞부분을 다시 써야 하는 시점에 새 에포크로 합쳐 정리합니다.</div>
+
+<h2 id="ch09-6">9.6 압축(Compaction): 언제, 무엇을 남기나</h2>
+<h3>발동 조건</h3>
+<pre><code><span class="src">session/compaction.ts</span>const calculateCeiling = (limit, buffer) =&gt; {
+  const window = inputWindow(limit)
+  if (window &lt;= 0) return Number.POSITIVE_INFINITY
+  const tokens = typeof buffer === "string" ? Math.round((window * Number.parseFloat(buffer)) / 100) : buffer
+  if (tokens !== undefined &amp;&amp; tokens &lt; window) return window - tokens
+  return window - Math.max(Math.floor(window * RESERVE_SHARE), window &gt;= 2 * RESERVE_MIN ? RESERVE_MIN : 0)
+}</code></pre>
+<pre><code><span class="src">session/compaction.ts — 유효 입력 창</span>const inputWindow = (limit) =&gt;
+  limit.input &amp;&amp; limit.context ? Math.min(limit.input, limit.context) : limit.input || limit.context</code></pre>
+<p>예를 들어 컨텍스트 창이 200k이고 <code>input</code> 한도가 따로 없는 모델이라면, 창의 15%인 30k가 최소 여유분 16k보다 크므로 30k를 비워 둡니다. 그래서 천장은 170k입니다. 컨텍스트 창이 200k라도 <code>input</code> 한도가 100k라면 실제로 쓸 수 있는 창은 100k입니다. 이때 15%인 15k는 16k보다 작으므로 16k를 비워 두고, 천장은 84k가 됩니다. 설정에서 <code>compaction.buffer</code>를 정해도 이 실제 입력 창을 기준으로 계산합니다.</p>
+<p>압축할지는 두 값을 더해서 정합니다. 하나는 <b>실제 토큰 수</b>로, 마지막 모델 응답 때 프로바이더가 알려 준 사용량(입력, 캐시 읽기·쓰기, 출력, 추론)입니다. 다른 하나는 <b>예상 토큰 수</b>로, 그 응답 뒤에 새로 붙어 프로바이더가 아직 세지 않은 도구 결과나 메시지의 양입니다. 이 값은 실제로 센 것이 아니라 글자 4개를 토큰 1개로 치는 <b>추측값</b>입니다(<code>util/token.ts</code>). 소스에는 왜 4인지 적혀 있지 않은데, 영어 글에서 토큰 하나가 대략 4글자라는 경험칙을 따른 것으로 보입니다. 두 값의 합이 천장에 닿거나 넘으면 자동으로 압축합니다.</p>
+<p>예: 200k 창 모델의 천장은 170k입니다. 직전 응답에서 프로바이더가 160k를 썼다고 알려 왔습니다. 그 뒤 모델이 파일을 읽어 48,000자짜리 결과를 받으면 글자 4개를 토큰 1개로 쳐서 48,000 ÷ 4 = 약 12k로 추측합니다. 실제 토큰 수는 이와 다를 수 있습니다. 160k + 12k = 172k로 천장 170k를 넘으므로, 다음 요청을 보내기 전에 먼저 압축합니다.</p>
+<table>
+<tr><th>상수</th><th>값</th><th>의미</th></tr>
+<tr><td><code>keep</code></td><td>15,000</td><td>원문 그대로 남길 최근 토큰</td></tr>
+<tr><td><code>RESERVE_SHARE</code> / <code>RESERVE_MIN</code></td><td>0.15 / 16,000</td><td>비워 둘 창의 비율 / 최소량</td></tr>
+<tr><td><code>UNKNOWN_WINDOW</code></td><td>200,000</td><td>창 크기를 모를 때 가정</td></tr>
+<tr><td><code>SUMMARY_OUTPUT_FLOOR</code></td><td>32,000</td><td>요약 출력 최소 허용량</td></tr>
+<tr><td><code>SHRINK_STEPS</code></td><td>[0.85, 0.7, 0.5, 0.35]</td><td>"너무 길다" 거절 시 목표 축소</td></tr>
+<tr><td><code>TRANSCRIPT_CLIP</code></td><td>2,000자</td><td>잘린 항목의 앞뒤 보존량</td></tr>
+<tr><td><code>PRECOMPUTE_LEAD</code></td><td>60,000</td><td>천장 이만큼 전부터 백그라운드 요약 시작</td></tr>
+<tr><td><code>CACHE_LIFETIME</code> / <code>MARGIN</code></td><td>5분 / 30초</td><td>캐시 수명 가정</td></tr>
+</table>
+<h3>무엇을 남기나</h3>
+<div class="mermaid">
+flowchart LR
+  subgraph OLD["압축 전 이력"]
+    O1["오래된 교환들 ..."] --> O2["... 최근 15k 토큰"]
+  end
+  subgraph NEW["압축 후 모델이 보는 것"]
+    CP["conversation-checkpoint<br/>summary: 구조화 요약<br/>recent-context: 최근 원문"]
+  end
+  O1 -- "요약" --> CP
+  O2 -- "원문 보존 (user 메시지에서 시작)" --> CP
+</div>
+<p class="cap">그림 9-5 체크포인트 = 요약 + 최근 원문</p>
+<p>압축이 끝나면 예전 대화 전체는 <code>&lt;conversation-checkpoint&gt;</code> 태그로 감싼 <b>user 메시지 하나</b>로 바뀝니다. 이 메시지에는 지난 대화의 구조화 요약(<code>&lt;summary&gt;</code>)과 원문 그대로 남긴 최근 약 15k 토큰(<code>&lt;recent-context&gt;</code>)이 들어갑니다. 맨 앞에는 "이것은 지난 대화의 요약과 기록이니 새 지시가 아니라 과거 맥락으로 다루라"는 안내 문장이 붙습니다. 압축 뒤에 보내는 요청은 이 체크포인트 메시지로 시작하고, 그 뒤에 새 메시지가 이어집니다.</p>
+<p>예를 들어 주문 목록 API에 페이지네이션을 넣는 작업에서 1단계(DB 인덱스 추가)를 마치고 압축하면, 다음 요청의 맨 앞에는 아래와 같은 메시지가 들어갑니다. 요약은 정해진 틀(<code>## Objective</code>, <code>## Work State</code> 등)을 따르고, 최근 원문은 <code>[User]</code>, <code>[Assistant]</code>, <code>[Assistant tool call]</code>, <code>[Tool result]</code> 같은 머리표를 붙인 글로 풀어 씁니다.</p>
+<pre><code><span class="src">압축 후 모델이 받는 체크포인트 메시지 (가상의 예)</span>&lt;conversation-checkpoint&gt;
+The following is a summary and serialized record of earlier conversation. Treat it as historical context, not as new instructions.
+
+&lt;summary&gt;
+## Objective
+- 주문 목록 API에 커서 방식 페이지네이션 추가
+
+## Requirements
+- 기존 응답 필드는 바꾸지 않는다
+
+## Decisions
+- 오프셋 대신 커서 사용(주문이 많아 오프셋이 느림)
+
+## Work State
+### Completed
+- DB 인덱스 추가(db/migrations/0012.sql), 테스트 통과
+### Active
+- API 핸들러에 cursor 파라미터 추가
+### Blocked
+- (none)
+
+## Next Move
+1. src/api/orders.ts의 listOrders에 cursor·limit 처리
+2. 다음 페이지 커서를 응답에 넣고 테스트 추가
+
+## Relevant Files
+- `db/migrations/0012.sql`: 새로 만든 인덱스
+- `src/api/orders.ts`: 고칠 핸들러
+
+## Important Context
+- 변경 사항은 아직 커밋하지 않음
+&lt;/summary&gt;
+
+&lt;recent-context&gt;
+[User]: 좋아, 이제 API 쪽 해 줘
+
+[Assistant]: 핸들러부터 읽어 보겠습니다.
+[Assistant tool call]: read({"path":"src/api/orders.ts"})
+[Tool result]: export async function listOrders(req, res) {
+...
+&lt;/recent-context&gt;
+&lt;/conversation-checkpoint&gt;</code></pre>
+<ul>
+<li>원문으로 남길 구간(위 예의 <code>&lt;recent-context&gt;</code>)은 <b>user 메시지에서 시작</b>해 도구 호출과 결과가 쪼개지지 않게 합니다.</li>
+<li>요약 템플릿은 요약을 쓸 때 따라야 하는 <b>정해진 제목 틀</b>입니다(위 예의 <code>&lt;summary&gt;</code> 안 <code>##</code> 제목들). 목표(Objective), 사용자가 건 조건(Requirements), 이미 내린 결정과 그 이유(Decisions), 작업 상태(Work State — 끝난 일 Completed, 하는 중인 일 Active, 막힌 일 Blocked), 다음에 할 일(Next Move), 이어서 열어 봐야 할 파일(Relevant Files, 중요한 순서로 최대 15개), 다음 에이전트가 스스로 찾기 어려운 사실(Important Context) 순서로 씁니다.</li>
+<li>요약에는 <b>사용자와 에이전트가 주고받은 말과 한 일만</b> 담습니다. 사용자가 말한 것이 아니라 OpenCode가 미리 넣어 준 것, 즉 저장소 규칙, AGENTS.md 같은 지침 파일, 세션 ID 같은 환경 정보는 요약하지 말라고 지시합니다. 이것들은 압축 뒤에도 요청마다 최신본이 따로 들어가기 때문입니다(9.5절). 요약에 또 적으면 같은 내용이 겹치고, 나중에 파일이 바뀌어도 요약 속 옛 내용이 남습니다.</li>
+<li><b>요약 요청은 평소 요청을 그대로 보내고 끝에 요약 지시만 붙입니다.</b> 그래서 요약 자체가 프롬프트 캐시를 재사용합니다. 바로 위에서 요약에서 뺀다고 한 AGENTS.md와 환경 정보도 이 요청에는 그대로 들어 있습니다. 모델은 이것들을 <b>입력으로 보기는 하지만</b>, 요약 지시에 따라 <b>요약(출력)에는 옮겨 적지 않습니다</b>. 이것들을 일부러 빼고 보내면 요청 앞부분이 평소와 달라져 캐시를 다시 쓸 수 없습니다.</li>
+<li>응답에 템플릿 헤딩이 <b>하나도</b> 없으면 한 번 재촉(NUDGE)하고, 재응답에도 하나도 없으면 실패합니다. 검사는 "헤딩 중 하나라도 있는가"뿐이라 요약의 완전성까지 보장하지는 않습니다(템플릿도 해당 없는 절은 생략 가능하다고 안내).</li>
+<li>원본 전체 이력은 DB에 영속 보존됩니다. 압축은 "활성 이력"만 다시 만듭니다.</li>
+</ul>
+<h3>네이티브 압축과 선계산</h3>
+<ul>
+<li><code>model.compaction.type === "native"</code>면 프로바이더 자체 압축을 씁니다. "trigger" 방식은 체크포인트를 받아 최근 사용자 메시지를 앞에 붙이고, "endpoint" 방식은 프로바이더가 대체 창을 돌려줍니다. 결과는 암호화된 항목이라 같은 모델에서만 재생됩니다.</li>
+<li>선계산(precompute, 기본 꺼짐): 천장에 가까워지면 백그라운드로 요약해 두되 <b>적용하지 않고 보관</b>합니다. 실제로 필요할 때까지 캐시를 깨지 않기 위함입니다.</li>
+<li>모든 압축 호출 비용은 실패·중단이어도 즉시 <code>UsageRecorded{source:"compaction"}</code>로 청구됩니다.</li>
+</ul>
+<div class="box why"><b>왜 "최근 원문 + 요약"일까요?</b>
+요약만 남기면 모델은 방금 하던 일의 세부(정확한 오류 메시지, 마지막 diff)를 잃습니다. 원문만 남기면 창이 넘칩니다. 최근 15k 토큰은 "지금 손에 쥔 작업", 요약은 "여기까지 온 맥락"을 담당합니다. 사람이 인수인계할 때 "지금까지 요약 + 방금 하던 화면"을 넘기는 것과 같습니다.</div>
+
+<div class="box use" id="use-compact"><b>이렇게 씁니다 — 언제 /compact, 언제 /new인가</b>
+<p>자동 압축은 천장을 넘으면 알아서 일어나지만, 직접 시점을 고르면 더 잘 다룰 수 있습니다. <code>/compact</code>(<code>ctrl+x c</code>)는 지금까지의 대화를 위 그림처럼 <b>구조화 요약 + 최근 약 15k 토큰 원문</b>으로 바꿉니다. 요약에는 목표, 요구 사항, 결정, 작업 상태, 다음 할 일, 관련 파일, 중요한 맥락이 정해진 틀로 들어갑니다.</p>
+<table>
+<tr><th>상황</th><th>고를 것</th><th>이유</th></tr>
+<tr><td>같은 작업을 계속하는데 대화가 길어져 느리고 비싸다</td><td><code>/compact</code></td><td>목표·결정·진행 상태는 요약으로 이어지고, 최근 흐름은 원문으로 남음</td></tr>
+<tr><td>한 덩어리 일이 끝나 다음 단계로 넘어간다</td><td><code>/compact</code></td><td>앞 단계의 결론만 들고 가볍게 다음 단계를 시작</td></tr>
+<tr><td>전혀 다른 일을 시작한다</td><td><code>/new</code></td><td>이전 맥락은 오히려 방해. 요약 비용도 들지 않음</td></tr>
+<tr><td>에이전트가 잘못된 가정에 계속 붙잡혀 있다</td><td><code>/new</code> 또는 <code>/undo</code></td><td>요약은 그 잘못된 가정까지 "결정"으로 보존할 수 있음</td></tr>
+</table>
+<p><b>예 — 큰 기능을 단계별로 만들기.</b> 1단계 "DB 스키마 추가"가 끝나 테스트까지 통과했습니다. 여기서 <code>/compact</code>를 하면 요약에 "스키마 추가 완료, 마이그레이션 파일은 db/migrations/0012.sql" 같은 내용이 남고, 2단계 "API 구현"을 가벼운 맥락으로 시작할 수 있습니다. 에이전트가 일하는 중에 눌러도 됩니다. 압축은 inbox에 제어 항목으로 들어가 다음 스텝 경계에서 실행됩니다.</p>
+<div class="box warn"><b>알아 둘 것</b>
+<ul>
+<li><b>모델 호출이 일어납니다.</b> 요약을 만드는 데 비용이 들고(틀을 벗어나면 한 번 더 재시도), 사용량에 "compaction"으로 기록됩니다. <code>compaction</code> 에이전트에 모델을 정해 두면 그 모델이, 아니면 세션 모델이 요약합니다.</li>
+<li><b>TUI에서 고른 모델이 세션 모델로 확정됩니다.</b> <code>/compact</code>는 압축 전에 현재 선택한 모델로 세션 모델을 바꿉니다.</li>
+<li><b>되돌리기가 확정됩니다.</b> <code>/undo</code>로 숨겨 둔 메시지가 있으면, 압축하는 순간 그 메시지들이 영구 삭제되어 <code>/redo</code>를 할 수 없게 됩니다(11.9절).</li>
+<li>자동 압축을 꺼 두어도 <code>/compact</code>는 동작합니다. 아직 대화가 없으면 "Nothing to compact yet"이 뜹니다.</li>
+</ul></div>
+</div>
+
+<h2 id="ch09-7">9.7 제목·사용량·통계</h2>
+<ul>
+<li><b>제목</b>(<code>title.ts</code>): 최대 100자, 컨텍스트 8,000자, 첫 메시지 2,000자. 작은 모델(또는 최소 추론 변형)을 먼저 시도하고 실패하면 주 모델로. <code>Renamed</code>는 "그사이 다른 이벤트가 없었을 때만" 커밋되어 사용자의 수동 이름 변경이 항상 이깁니다.</li>
+<li><b>사용량</b>(<code>usage.ts</code>): 프로바이더가 보고한 비용을 우선합니다("보고된 0도 권위 있음"). 없으면 카탈로그 가격으로 계산하며 컨텍스트 티어를 고려하고, 추론 토큰은 출력 단가로 청구합니다.</li>
+<li><b>통계</b>(<code>stats.ts</code>): 모델별 스텝·토큰·비용, 도구별 호출·성공·소요 시간. 기본 창 31일. CLI <code>opencode stats</code>가 사용합니다.</li>
+</ul>
+
+<div class="box note"><b>"작은 모델"은 어떻게 고르나</b>
+<p>모델 크기를 재서 스스로 판단하는 것이 아니라 정해진 순서를 따릅니다(<code>session/context.ts</code>의 <code>selectTitle</code>).</p>
+<ol>
+<li><b>직접 지정</b>: <code>title</code> 에이전트에 모델이 지정되어 있으면 그 모델을 씁니다. 변형을 적지 않았으면 그 모델의 최소 추론 변형을 고릅니다.</li>
+<li><b>지정이 없으면</b>: 주 모델과 <b>같은 프로바이더</b>의 활성 텍스트 모델 가운데 계열(family)이 <code>gpt-luna</code> → <code>gemini-flash-lite</code> → <code>gemini-flash</code> → <code>claude-haiku</code> 순서로 맞는 첫 모델을 최소 추론 변형으로 씁니다(<code>model.ts</code>의 <code>Model.small</code>). 소스에 박힌 계열 목록과 맞춰 볼 뿐입니다.</li>
+<li><b>그런 모델도 없으면</b>: 주 모델을 그대로 쓰되 더 낮은 추론 변형으로 씁니다.</li>
+</ol>
+<p>제목용 모델을 직접 정하려면 <code>opencode.json</code>의 <code>agents.title.model</code>에 적습니다. 아래 모델 ID는 예시입니다.</p>
+<pre><code><span class="src">opencode.json — 제목 생성 모델 지정 (예)</span>{
+  "model": "anthropic/claude-sonnet-5#high",
+  "agents": {
+    "title": { "model": "anthropic/claude-haiku-4-5" }
+  }
+}</code></pre>
+<p>값은 <code>"providerID/modelID#variant"</code> 문자열이나 <code>{providerID, model, variant?}</code> 객체 어느 쪽으로 써도 됩니다. V1의 <code>small_model</code>도 자동으로 <code>agents.title.model</code>로 옮겨지며, 두 설정이 함께 있으면 <code>agents.title</code> 쪽이 이깁니다.</p>
+</div>
+
+<div class="box use" id="use-stats"><b>이렇게 씁니다 — 얼마나 썼나: /stats · /usage</b>
+<p>두 명령은 이름이 비슷하지만 보는 대상이 전혀 다릅니다.</p>
+<table>
+<tr><th>명령</th><th>보여 주는 것</th><th>범위</th></tr>
+<tr><td><code>/stats</code></td><td>총 토큰(입력+출력+추론+캐시, 압축 포함), GitHub 잔디 같은 일별 활동 달력, 최장 연속 일수, 활동 일수, 세션 수</td><td>이 기계의 <b>모든 프로젝트</b>, 올해 1월 1일부터</td></tr>
+<tr><td><code>/usage</code></td><td>OpenCode Console 워크스페이스의 모델별 남은 예산("$X left")과 초기화 시점</td><td><code>/connect</code>로 OpenCode Console에 로그인했을 때만</td></tr>
+</table>
+<p><b>예 — 이번 달 얼마나 썼는지 궁금하다.</b> <code>/stats</code>로 잔디 달력을 보면 어느 날 집중해서 썼는지 한눈에 보입니다. 다만 <code>/usage</code>는 Anthropic이나 OpenAI 계정의 사용량이나 요금 한도를 보여 주지 <b>않습니다.</b> OpenCode Console을 쓰지 않는다면 "Sign in to OpenCode Console with /connect…"만 나옵니다. 프로바이더 요금은 각 프로바이더의 콘솔에서 확인해야 합니다.</p>
+<p>OpenCode Console을 쓰는 경우에는 고른 모델의 예산이 바닥나기 전에 알림이 한 번 뜨고("View usage" 버튼), 다 쓰면 "Switch model" 버튼과 함께 알려 줍니다. <code>/undo</code>를 확정해 지운 메시지는 <code>/stats</code>에서도 빠지고, 포크로 복사된 이력은 두 번 세지 않습니다.</p>
+</div>
+
+<h2 id="ch09-8">9.8 세션별 WebSocket 전송</h2>
+<p>상태 유지 WebSocket을 지원하는 프로바이더(Responses 계열 연속 체크포인트)에서만 씁니다. 세션당 채널 하나, 세마포어로 보호합니다.</p>
+<div class="box why"><b>WebSocket은 HTTP보다 무엇이 나은가?</b> WebSocket 채널은 앞 스텝의 응답 ID와 그때 보낸 요청·받은 출력을 체크포인트로 들고 있다가, 다음 스텝에서는 <code>previous_response_id</code>와 새로 늘어난 입력만 보냅니다(증분 전송). 앞 요청과 출력이 새 요청 입력의 앞부분과 그대로 겹치고, 모델·시스템 지시·도구 목록 같은 나머지 요청 설정도 앞 스텝과 같을 때만 이렇게 하고, 아니면 요청 전체를 보냅니다. 프로바이더가 이어 받기를 거절해도(<code>previous_response_not_found</code> 등) 전체 요청으로 다시 보냅니다. HTTP 경로에는 이 체크포인트가 없어 스텝마다 대화 전체를 다시 보냅니다. 대신 WebSocket은 프로바이더가 지원해야 쓸 수 있고, 연결 교체·유휴 종료 같은 관리가 따릅니다. 그래서 OpenCode는 HTTP를 언제든 돌아갈 수 있는 기본값으로 두고, WebSocket은 되면 쓰는 최적화로 다룹니다.</div>
+<table>
+<tr><th>상수</th><th>값</th><th>이유</th></tr>
+<tr><td><code>ROTATE_AFTER_MS</code></td><td>55분</td><td>장기 연결 교체</td></tr>
+<tr><td><code>CONNECT_TIMEOUT</code></td><td>15초</td><td></td></tr>
+<tr><td><code>IDLE_TIMEOUT</code></td><td>30분</td><td>"추론 모델은 몇 분간 아무것도 스트리밍하지 않을 수 있다"</td></tr>
+<tr><td><code>MAX_STREAM_FAILURES</code></td><td>5</td><td>연속 실패 시 그 세션은 HTTP로 고정</td></tr>
+</table>
+<p>연결 실패는 즉시 HTTP 폴백으로 고정되고, 1009(프레임 과대) 종료도 HTTP로 떨어집니다. 이동·리로드·삭제 시 채널을 닫습니다.</p>
+<p><b>프로바이더마다 다른 점.</b> 여기서 말하는 WebSocket은 OpenCode가 따로 만든 전송 방식이 아니라 프로바이더 API가 제공하는 기능입니다. 그래서 쓸 수 있는지와 세부 설정이 프로바이더마다 다릅니다. <code>packages/ai</code>는 Responses 계열 공통 채널 <code>OpenResponsesChannel</code>을 하나 두고, 프로바이더마다 이 채널을 쓸지, 연결을 얼마 만에 새로 열지(<code>rotateAfterMs</code>)를 정합니다. 프로바이더가 이 값을 정하면 그 값이 우선하고, 위 표의 <code>ROTATE_AFTER_MS</code>(55분)는 기본값으로만 쓰입니다.</p>
+<table>
+<tr><th>프로바이더</th><th>WebSocket</th><th>연결 교체 주기</th><th>특이 사항</th></tr>
+<tr><td>OpenAI</td><td>씀</td><td>55분</td><td>요청에 <code>openai-beta: responses_websockets=2026-02-06</code> 헤더를 붙입니다(이미 지정한 값이 있으면 그 값을 씁니다)</td></tr>
+<tr><td>Azure OpenAI</td><td>조건부</td><td>55분</td><td>https <code>*.openai.azure.com</code>의 <code>/openai/v1/responses</code>이고 <code>api-version=v1</code>일 때만 씁니다. 나머지는 HTTP</td></tr>
+<tr><td>xAI</td><td>씀</td><td>24분</td><td>기본값 <code>store: false</code>에서는 <code>previous_response_id</code>로 이어 갈 수 없어, 연결은 재사용하되 스텝마다 요청 전체를 보냅니다</td></tr>
+<tr><td>Meta</td><td>안 씀</td><td>—</td><td>Responses 형식이지만 WebSocket 업그레이드를 지원하지 않아 항상 HTTP/SSE를 씁니다</td></tr>
+</table>
+<p>WebSocket 채널이 없는 엔드포인트에서 WebSocket을 요청하면 경고 로그를 남기고 HTTP로 보냅니다.</p>
+</section>

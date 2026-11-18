@@ -1,0 +1,307 @@
+<h3>leader (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>leader</code></td><td><code>ctrl+x</code></td><td>Leader key for keybind combinations</td></tr>
+</table>
+<h3>app (9개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>app.exit</code></td><td><code>ctrl+c,ctrl+d,&lt;leader&gt;q</code></td><td>Exit the application</td></tr>
+<tr><td><code>app.clear</code></td><td><code>ctrl+l</code></td><td>Clear the screen in mini</td></tr>
+<tr><td><code>app.debug</code></td><td><code>none</code></td><td>Toggle debug panel</td></tr>
+<tr><td><code>app.console</code></td><td><code>none</code></td><td>Toggle console</td></tr>
+<tr><td><code>app.scrap</code></td><td><code>none</code></td><td>Open scrap screen</td></tr>
+<tr><td><code>app.toggle.animations</code></td><td><code>none</code></td><td>Toggle animations</td></tr>
+<tr><td><code>app.toggle.file_context</code></td><td><code>none</code></td><td>Toggle file context</td></tr>
+<tr><td><code>app.toggle.diffwrap</code></td><td><code>none</code></td><td>Toggle diff wrapping</td></tr>
+<tr><td><code>app.toggle.paste_summary</code></td><td><code>none</code></td><td>Toggle paste summary</td></tr>
+</table>
+<h3>command (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>command.palette.show</code></td><td><code>ctrl+p</code></td><td>List available commands</td></tr>
+</table>
+<h3>help (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>help.show</code></td><td><code>none</code></td><td>Open help dialog</td></tr>
+</table>
+<h3>docs (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>docs.open</code></td><td><code>none</code></td><td>Open documentation</td></tr>
+</table>
+<h3>opencode (3개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>opencode.settings</code></td><td><code>none</code></td><td>Open settings</td></tr>
+<tr><td><code>opencode.status</code></td><td><code>&lt;leader&gt;s</code></td><td>View status</td></tr>
+<tr><td><code>opencode.debug</code></td><td><code>none</code></td><td>View debug info</td></tr>
+</table>
+<h3>server (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>server.pair</code></td><td><code>none</code></td><td>Pair device</td></tr>
+</table>
+<h3>service (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>service.restart</code></td><td><code>none</code></td><td>Restart service</td></tr>
+</table>
+<h3>location (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>location.reload</code></td><td><code>none</code></td><td>Reload configuration</td></tr>
+</table>
+<h3>diff (26개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>diff.open</code></td><td><code>none</code></td><td>Open diff viewer</td></tr>
+<tr><td><code>diff.close</code></td><td><code>escape,q</code></td><td>Close diff viewer</td></tr>
+<tr><td><code>diff.down</code></td><td><code>j,down</code></td><td>Move diff viewer down</td></tr>
+<tr><td><code>diff.up</code></td><td><code>k,up</code></td><td>Move diff viewer up</td></tr>
+<tr><td><code>diff.page.down</code></td><td><code>pagedown,ctrl+f</code></td><td>Page diff viewer down</td></tr>
+<tr><td><code>diff.page.up</code></td><td><code>pageup,ctrl+b</code></td><td>Page diff viewer up</td></tr>
+<tr><td><code>diff.half_page.down</code></td><td><code>ctrl+d</code></td><td>Scroll diff viewer down half a page</td></tr>
+<tr><td><code>diff.half_page.up</code></td><td><code>ctrl+u</code></td><td>Scroll diff viewer up half a page</td></tr>
+<tr><td><code>diff.first</code></td><td><code>gg,home</code></td><td>Go to the start of the diff</td></tr>
+<tr><td><code>diff.last</code></td><td><code>shift+g,end</code></td><td>Go to the end of the diff</td></tr>
+<tr><td><code>diff.toggle</code></td><td><code>none</code></td><td>Deprecated: file tree is mouse-controlled</td></tr>
+<tr><td><code>diff.expand</code></td><td><code>none</code></td><td>Deprecated: file tree is mouse-controlled</td></tr>
+<tr><td><code>diff.expand_all</code></td><td><code>none</code></td><td>Deprecated: file tree is mouse-controlled</td></tr>
+<tr><td><code>diff.collapse</code></td><td><code>none</code></td><td>Deprecated: file tree is mouse-controlled</td></tr>
+<tr><td><code>diff.switch_focus</code></td><td><code>none</code></td><td>Deprecated: keyboard navigation always controls the diff</td></tr>
+<tr><td><code>diff.next_hunk</code></td><td><code>]</code></td><td>Jump to next diff hunk</td></tr>
+<tr><td><code>diff.previous_hunk</code></td><td><code>[</code></td><td>Jump to previous diff hunk</td></tr>
+<tr><td><code>diff.next_file</code></td><td><code>n,alt+down</code></td><td>Jump to next diff file</td></tr>
+<tr><td><code>diff.previous_file</code></td><td><code>p,alt+up</code></td><td>Jump to previous diff file</td></tr>
+<tr><td><code>diff.toggle_file_tree</code></td><td><code>b</code></td><td>Toggle diff viewer file tree</td></tr>
+<tr><td><code>diff.single_patch</code></td><td><code>s</code></td><td>Toggle single patch view</td></tr>
+<tr><td><code>diff.switch_source</code></td><td><code>d</code></td><td>Switch diff viewer source</td></tr>
+<tr><td><code>diff.toggle_view</code></td><td><code>v</code></td><td>Toggle diff viewer split or unified view</td></tr>
+<tr><td><code>diff.toggle_fullscreen</code></td><td><code>f</code></td><td>Toggle diff viewer full screen</td></tr>
+<tr><td><code>diff.mark_reviewed</code></td><td><code>m</code></td><td>Toggle selected diff file reviewed</td></tr>
+<tr><td><code>diff.help</code></td><td><code>?,shift+?,shift+/</code></td><td>Show more diff viewer shortcuts</td></tr>
+</table>
+<h3>prompt (18개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>prompt.editor</code></td><td><code>&lt;leader&gt;e</code></td><td>Open external editor</td></tr>
+<tr><td><code>prompt.submit</code></td><td><code>none</code></td><td>Submit prompt</td></tr>
+<tr><td><code>prompt.queue</code></td><td><code>&lt;leader&gt;return</code></td><td>Queue prompt</td></tr>
+<tr><td><code>prompt.editor_context.clear</code></td><td><code>none</code></td><td>Clear editor context</td></tr>
+<tr><td><code>prompt.images.view</code></td><td><code>&lt;leader&gt;i</code></td><td>View image attachments</td></tr>
+<tr><td><code>prompt.skills</code></td><td><code>none</code></td><td>Open skill selector</td></tr>
+<tr><td><code>prompt.stash</code></td><td><code>none</code></td><td>Stash prompt</td></tr>
+<tr><td><code>prompt.stash.pop</code></td><td><code>none</code></td><td>Pop stashed prompt</td></tr>
+<tr><td><code>prompt.stash.list</code></td><td><code>none</code></td><td>List stashed prompts</td></tr>
+<tr><td><code>prompt.clear</code></td><td><code>ctrl+c</code></td><td>Clear input field</td></tr>
+<tr><td><code>prompt.paste</code></td><td><code>{ key: &quot;ctrl+v&quot;, preventDefault: false }</code></td><td>Paste from clipboard</td></tr>
+<tr><td><code>prompt.history.previous</code></td><td><code>up</code></td><td>Previous history item</td></tr>
+<tr><td><code>prompt.history.next</code></td><td><code>down</code></td><td>Next history item</td></tr>
+<tr><td><code>prompt.autocomplete.prev</code></td><td><code>up,ctrl+p</code></td><td>Move to previous autocomplete item</td></tr>
+<tr><td><code>prompt.autocomplete.next</code></td><td><code>down,ctrl+n</code></td><td>Move to next autocomplete item</td></tr>
+<tr><td><code>prompt.autocomplete.hide</code></td><td><code>escape</code></td><td>Hide autocomplete</td></tr>
+<tr><td><code>prompt.autocomplete.select</code></td><td><code>return</code></td><td>Select autocomplete item</td></tr>
+<tr><td><code>prompt.autocomplete.complete</code></td><td><code>tab</code></td><td>Complete autocomplete item</td></tr>
+</table>
+<h3>theme (3개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>theme.switch</code></td><td><code>none</code></td><td>List available themes</td></tr>
+<tr><td><code>theme.switch_mode</code></td><td><code>none</code></td><td>Switch between light and dark theme mode</td></tr>
+<tr><td><code>theme.mode.lock</code></td><td><code>none</code></td><td>Lock or unlock theme mode</td></tr>
+</table>
+<h3>session (70개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>session.sidebar.toggle</code></td><td><code>&lt;leader&gt;b</code></td><td>Toggle sidebar</td></tr>
+<tr><td><code>session.toggle.scrollbar</code></td><td><code>none</code></td><td>Toggle session scrollbar</td></tr>
+<tr><td><code>session.export</code></td><td><code>&lt;leader&gt;x</code></td><td>Export session to editor</td></tr>
+<tr><td><code>session.copy</code></td><td><code>none</code></td><td>Copy session transcript</td></tr>
+<tr><td><code>session.copy.id</code></td><td><code>none</code></td><td>Copy session ID</td></tr>
+<tr><td><code>session.move</code></td><td><code>none</code></td><td>Manage workspaces</td></tr>
+<tr><td><code>session.new</code></td><td><code>&lt;leader&gt;n</code></td><td>Create a new session</td></tr>
+<tr><td><code>session.list</code></td><td><code>&lt;leader&gt;l</code></td><td>List all sessions</td></tr>
+<tr><td><code>session.tab.next</code></td><td><code>ctrl+tab,alt+down</code></td><td>Switch to next open session tab</td></tr>
+<tr><td><code>session.tab.previous</code></td><td><code>ctrl+shift+tab,alt+up</code></td><td>Switch to previous open session tab</td></tr>
+<tr><td><code>session.tab.history.back</code></td><td><code>none</code></td><td>Go back in session tab history</td></tr>
+<tr><td><code>session.tab.history.forward</code></td><td><code>ctrl+i</code></td><td>Go forward in session tab history</td></tr>
+<tr><td><code>session.tab.next_unread</code></td><td><code>alt+shift+down</code></td><td>Switch to next unread session tab</td></tr>
+<tr><td><code>session.tab.previous_unread</code></td><td><code>alt+shift+up</code></td><td>Switch to previous unread session tab</td></tr>
+<tr><td><code>session.tab.close</code></td><td><code>&lt;leader&gt;w</code></td><td>Close current session tab</td></tr>
+<tr><td><code>session.tab.reopen</code></td><td><code>ctrl+shift+t</code></td><td>Reopen last closed session tab</td></tr>
+<tr><td><code>session.timeline</code></td><td><code>&lt;leader&gt;g</code></td><td>Show session timeline</td></tr>
+<tr><td><code>session.fork</code></td><td><code>none</code></td><td>Fork session from message</td></tr>
+<tr><td><code>session.rename</code></td><td><code>ctrl+r</code></td><td>Rename session</td></tr>
+<tr><td><code>session.delete</code></td><td><code>ctrl+d</code></td><td>Delete session</td></tr>
+<tr><td><code>session.share</code></td><td><code>none</code></td><td>Deprecated: session sharing was removed</td></tr>
+<tr><td><code>session.unshare</code></td><td><code>none</code></td><td>Deprecated: session sharing was removed</td></tr>
+<tr><td><code>session.interrupt</code></td><td><code>escape</code></td><td>Interrupt current session</td></tr>
+<tr><td><code>session.background</code></td><td><code>ctrl+b</code></td><td>Background blocking session tools</td></tr>
+<tr><td><code>session.compact</code></td><td><code>&lt;leader&gt;c</code></td><td>Compact the session</td></tr>
+<tr><td><code>session.aside</code></td><td><code>none</code></td><td>Ask a side question</td></tr>
+<tr><td><code>session.cd</code></td><td><code>none</code></td><td>Change working directory</td></tr>
+<tr><td><code>session.queued_prompts</code></td><td><code>&lt;leader&gt;q</code></td><td>Manage queued prompts</td></tr>
+<tr><td><code>session.toggle.exploration_grouping</code></td><td><code>none</code></td><td>Toggle related tool call grouping</td></tr>
+<tr><td><code>session.verbosity.cycle</code></td><td><code>none</code></td><td>Cycle transcript verbosity</td></tr>
+<tr><td><code>session.child.first</code></td><td><code>down</code></td><td>Toggle subagent picker</td></tr>
+<tr><td><code>session.child.next</code></td><td><code>right</code></td><td>Go to next child session</td></tr>
+<tr><td><code>session.child.previous</code></td><td><code>left</code></td><td>Go to previous child session</td></tr>
+<tr><td><code>session.parent</code></td><td><code>up</code></td><td>Go to parent session</td></tr>
+<tr><td><code>session.pin.toggle</code></td><td><code>ctrl+f</code></td><td>Pin or unpin session in the session list</td></tr>
+<tr><td><code>session.quick_switch.1</code></td><td><code>&lt;leader&gt;1</code></td><td>Switch to session in quick slot 1</td></tr>
+<tr><td><code>session.quick_switch.2</code></td><td><code>&lt;leader&gt;2</code></td><td>Switch to session in quick slot 2</td></tr>
+<tr><td><code>session.quick_switch.3</code></td><td><code>&lt;leader&gt;3</code></td><td>Switch to session in quick slot 3</td></tr>
+<tr><td><code>session.quick_switch.4</code></td><td><code>&lt;leader&gt;4</code></td><td>Switch to session in quick slot 4</td></tr>
+<tr><td><code>session.quick_switch.5</code></td><td><code>&lt;leader&gt;5</code></td><td>Switch to session in quick slot 5</td></tr>
+<tr><td><code>session.quick_switch.6</code></td><td><code>&lt;leader&gt;6</code></td><td>Switch to session in quick slot 6</td></tr>
+<tr><td><code>session.quick_switch.7</code></td><td><code>&lt;leader&gt;7</code></td><td>Switch to session in quick slot 7</td></tr>
+<tr><td><code>session.quick_switch.8</code></td><td><code>&lt;leader&gt;8</code></td><td>Switch to session in quick slot 8</td></tr>
+<tr><td><code>session.quick_switch.9</code></td><td><code>&lt;leader&gt;9</code></td><td>Switch to session in quick slot 9</td></tr>
+<tr><td><code>session.tab.select.1</code></td><td><code>&lt;leader&gt;1,ctrl+1</code></td><td>Switch to session tab 1</td></tr>
+<tr><td><code>session.tab.select.2</code></td><td><code>&lt;leader&gt;2,ctrl+2</code></td><td>Switch to session tab 2</td></tr>
+<tr><td><code>session.tab.select.3</code></td><td><code>&lt;leader&gt;3,ctrl+3</code></td><td>Switch to session tab 3</td></tr>
+<tr><td><code>session.tab.select.4</code></td><td><code>&lt;leader&gt;4,ctrl+4</code></td><td>Switch to session tab 4</td></tr>
+<tr><td><code>session.tab.select.5</code></td><td><code>&lt;leader&gt;5,ctrl+5</code></td><td>Switch to session tab 5</td></tr>
+<tr><td><code>session.tab.select.6</code></td><td><code>&lt;leader&gt;6,ctrl+6</code></td><td>Switch to session tab 6</td></tr>
+<tr><td><code>session.tab.select.7</code></td><td><code>&lt;leader&gt;7,ctrl+7</code></td><td>Switch to session tab 7</td></tr>
+<tr><td><code>session.tab.select.8</code></td><td><code>&lt;leader&gt;8,ctrl+8</code></td><td>Switch to session tab 8</td></tr>
+<tr><td><code>session.tab.select.9</code></td><td><code>&lt;leader&gt;9,ctrl+9</code></td><td>Switch to session tab 9</td></tr>
+<tr><td><code>session.tab.select.10</code></td><td><code>&lt;leader&gt;0,ctrl+0</code></td><td>Switch to session tab 10</td></tr>
+<tr><td><code>session.page.up</code></td><td><code>pageup,ctrl+alt+b,kppageup</code></td><td>Scroll messages up by one page</td></tr>
+<tr><td><code>session.page.down</code></td><td><code>pagedown,ctrl+alt+f,kppagedown</code></td><td>Scroll messages down by one page</td></tr>
+<tr><td><code>session.line.up</code></td><td><code>ctrl+alt+y</code></td><td>Scroll messages up by one line</td></tr>
+<tr><td><code>session.line.down</code></td><td><code>ctrl+alt+e</code></td><td>Scroll messages down by one line</td></tr>
+<tr><td><code>session.half.page.up</code></td><td><code>ctrl+alt+u</code></td><td>Scroll messages up by half page</td></tr>
+<tr><td><code>session.half.page.down</code></td><td><code>ctrl+alt+d</code></td><td>Scroll messages down by half page</td></tr>
+<tr><td><code>session.first</code></td><td><code>ctrl+g,home,alt+home,kphome</code></td><td>Navigate to first message</td></tr>
+<tr><td><code>session.last</code></td><td><code>ctrl+alt+g,end,kpend</code></td><td>Navigate to last message</td></tr>
+<tr><td><code>session.message.next</code></td><td><code>none</code></td><td>Navigate to next message</td></tr>
+<tr><td><code>session.message.previous</code></td><td><code>none</code></td><td>Navigate to previous message</td></tr>
+<tr><td><code>session.message.user.next</code></td><td><code>none</code></td><td>Navigate to next user message</td></tr>
+<tr><td><code>session.message.user.previous</code></td><td><code>none</code></td><td>Navigate to previous user message</td></tr>
+<tr><td><code>session.messages_last_user</code></td><td><code>alt+end</code></td><td>Navigate to last user message</td></tr>
+<tr><td><code>session.undo</code></td><td><code>&lt;leader&gt;u</code></td><td>Undo message</td></tr>
+<tr><td><code>session.redo</code></td><td><code>&lt;leader&gt;r</code></td><td>Redo message</td></tr>
+<tr><td><code>session.toggle.thinking</code></td><td><code>none</code></td><td>Toggle thinking blocks visibility</td></tr>
+</table>
+<h3>pane (2개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>pane.focus.left</code></td><td><code>&lt;leader&gt;left</code></td><td>Focus session pane</td></tr>
+<tr><td><code>pane.focus.right</code></td><td><code>&lt;leader&gt;right</code></td><td>Focus right pane</td></tr>
+</table>
+<h3>terminal (5개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>terminal.select</code></td><td><code>&lt;leader&gt;down</code></td><td>Select terminal</td></tr>
+<tr><td><code>terminal.toggle</code></td><td><code>&lt;leader&gt;t</code></td><td>Toggle terminal pane</td></tr>
+<tr><td><code>terminal.close</code></td><td><code>&lt;leader&gt;up</code></td><td>Close terminal pane</td></tr>
+<tr><td><code>terminal.suspend</code></td><td><code>ctrl+z</code></td><td>Suspend terminal</td></tr>
+<tr><td><code>terminal.title.toggle</code></td><td><code>none</code></td><td>Toggle terminal title</td></tr>
+</table>
+<h3>open (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>open.menu</code></td><td><code>ctrl+o</code></td><td>Open recent sessions and projects</td></tr>
+</table>
+<h3>queued_prompt (2개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>queued_prompt.undo</code></td><td><code>ctrl+u</code></td><td>Undo queued prompt</td></tr>
+<tr><td><code>queued_prompt.delete</code></td><td><code>ctrl+d</code></td><td>Delete queued prompt</td></tr>
+</table>
+<h3>stash (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>stash.delete</code></td><td><code>ctrl+d</code></td><td>Delete stash entry</td></tr>
+</table>
+<h3>model (8개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>model.dialog.provider</code></td><td><code>ctrl+a</code></td><td>Open provider list from model dialog</td></tr>
+<tr><td><code>model.dialog.favorite</code></td><td><code>ctrl+f</code></td><td>Toggle model favorite status</td></tr>
+<tr><td><code>model.dialog.usage</code></td><td><code>ctrl+u</code></td><td>Open usage limits from model dialog</td></tr>
+<tr><td><code>model.list</code></td><td><code>&lt;leader&gt;m</code></td><td>List available models</td></tr>
+<tr><td><code>model.cycle_recent</code></td><td><code>f2</code></td><td>Next recently used model</td></tr>
+<tr><td><code>model.cycle_recent_reverse</code></td><td><code>shift+f2</code></td><td>Previous recently used model</td></tr>
+<tr><td><code>model.cycle_favorite</code></td><td><code>none</code></td><td>Next favorite model</td></tr>
+<tr><td><code>model.cycle_favorite_reverse</code></td><td><code>none</code></td><td>Previous favorite model</td></tr>
+</table>
+<h3>mcp (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>mcp.list</code></td><td><code>none</code></td><td>List MCP servers</td></tr>
+</table>
+<h3>usage (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>usage.show</code></td><td><code>none</code></td><td>View usage limits</td></tr>
+</table>
+<h3>provider (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>provider.connect</code></td><td><code>none</code></td><td>Connect integration</td></tr>
+</table>
+<h3>agent (3개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>agent.list</code></td><td><code>&lt;leader&gt;a</code></td><td>List agents</td></tr>
+<tr><td><code>agent.cycle</code></td><td><code>shift+tab</code></td><td>Next agent</td></tr>
+<tr><td><code>agent.cycle.reverse</code></td><td><code>none</code></td><td>Previous agent</td></tr>
+</table>
+<h3>variant (2개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>variant.cycle</code></td><td><code>ctrl+t</code></td><td>Cycle model variants</td></tr>
+<tr><td><code>variant.list</code></td><td><code>none</code></td><td>List model variants</td></tr>
+</table>
+<h3>messages (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>messages.copy</code></td><td><code>&lt;leader&gt;y</code></td><td>Copy message</td></tr>
+</table>
+<h3>input (36개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>input.submit</code></td><td><code>return</code></td><td>Submit input</td></tr>
+<tr><td><code>input.newline</code></td><td><code>shift+return,ctrl+return,alt+return,ctrl+j</code></td><td>Insert newline in input</td></tr>
+<tr><td><code>input.move.left</code></td><td><code>left,ctrl+b</code></td><td>Move cursor left in input</td></tr>
+<tr><td><code>input.move.right</code></td><td><code>right,ctrl+f</code></td><td>Move cursor right in input</td></tr>
+<tr><td><code>input.move.up</code></td><td><code>up</code></td><td>Move cursor up in input</td></tr>
+<tr><td><code>input.move.down</code></td><td><code>down</code></td><td>Move cursor down in input</td></tr>
+<tr><td><code>input.select.left</code></td><td><code>shift+left</code></td><td>Select left in input</td></tr>
+<tr><td><code>input.select.right</code></td><td><code>shift+right</code></td><td>Select right in input</td></tr>
+<tr><td><code>input.select.up</code></td><td><code>shift+up</code></td><td>Select up in input</td></tr>
+<tr><td><code>input.select.down</code></td><td><code>shift+down</code></td><td>Select down in input</td></tr>
+<tr><td><code>input.line.home</code></td><td><code>ctrl+a</code></td><td>Move to start of line in input</td></tr>
+<tr><td><code>input.line.end</code></td><td><code>ctrl+e</code></td><td>Move to end of line in input</td></tr>
+<tr><td><code>input.select.line.home</code></td><td><code>ctrl+shift+a</code></td><td>Select to start of line in input</td></tr>
+<tr><td><code>input.select.line.end</code></td><td><code>ctrl+shift+e</code></td><td>Select to end of line in input</td></tr>
+<tr><td><code>input.visual.line.home</code></td><td><code>alt+a</code></td><td>Move to start of visual line in input</td></tr>
+<tr><td><code>input.visual.line.end</code></td><td><code>alt+e</code></td><td>Move to end of visual line in input</td></tr>
+<tr><td><code>input.select.visual.line.home</code></td><td><code>alt+shift+a</code></td><td>Select to start of visual line in input</td></tr>
+<tr><td><code>input.select.visual.line.end</code></td><td><code>alt+shift+e</code></td><td>Select to end of visual line in input</td></tr>
+<tr><td><code>input.buffer.home</code></td><td><code>none</code></td><td>Move to start of buffer in input</td></tr>
+<tr><td><code>input.buffer.end</code></td><td><code>none</code></td><td>Move to end of buffer in input</td></tr>
+<tr><td><code>input.select.buffer.home</code></td><td><code>shift+home</code></td><td>Select to start of buffer in input</td></tr>
+<tr><td><code>input.select.buffer.end</code></td><td><code>shift+end</code></td><td>Select to end of buffer in input</td></tr>
+<tr><td><code>input.delete.line</code></td><td><code>ctrl+shift+d</code></td><td>Delete line in input</td></tr>
+<tr><td><code>input.delete.to.line.end</code></td><td><code>ctrl+k</code></td><td>Delete to end of line in input</td></tr>
+<tr><td><code>input.delete.to.line.start</code></td><td><code>ctrl+u</code></td><td>Delete to start of line in input</td></tr>
+<tr><td><code>input.backspace</code></td><td><code>backspace,shift+backspace</code></td><td>Backspace in input</td></tr>
+<tr><td><code>input.delete</code></td><td><code>ctrl+d,delete,shift+delete</code></td><td>Delete character in input</td></tr>
+<tr><td><code>input.undo</code></td><td><code>ctrl+-,super+z</code></td><td>Undo in input</td></tr>
+<tr><td><code>input.redo</code></td><td><code>ctrl+.,super+shift+z</code></td><td>Redo in input</td></tr>
+<tr><td><code>input.word.forward</code></td><td><code>alt+f,alt+right,ctrl+right</code></td><td>Move word forward in input</td></tr>
+<tr><td><code>input.word.backward</code></td><td><code>alt+b,alt+left,ctrl+left</code></td><td>Move word backward in input</td></tr>
+<tr><td><code>input.select.word.forward</code></td><td><code>alt+shift+f,alt+shift+right</code></td><td>Select word forward in input</td></tr>
+<tr><td><code>input.select.word.backward</code></td><td><code>alt+shift+b,alt+shift+left</code></td><td>Select word backward in input</td></tr>
+<tr><td><code>input.delete.word.forward</code></td><td><code>alt+d,alt+delete,ctrl+delete</code></td><td>Delete word forward in input</td></tr>
+<tr><td><code>input.delete.word.backward</code></td><td><code>ctrl+w,ctrl+backspace,alt+backspace</code></td><td>Delete word backward in input</td></tr>
+<tr><td><code>input.select.all</code></td><td><code>super+a</code></td><td>Select all in input</td></tr>
+</table>
+<h3>composer (11개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>composer.subagent.up</code></td><td><code>up</code></td><td>Previous subagent</td></tr>
+<tr><td><code>composer.subagent.down</code></td><td><code>down</code></td><td>Next subagent</td></tr>
+<tr><td><code>composer.subagent.select</code></td><td><code>return</code></td><td>Navigate to subagent</td></tr>
+<tr><td><code>composer.subagent.interrupt</code></td><td><code>ctrl+d</code></td><td>Interrupt subagent</td></tr>
+<tr><td><code>composer.shell.up</code></td><td><code>up</code></td><td>Previous shell</td></tr>
+<tr><td><code>composer.shell.down</code></td><td><code>down</code></td><td>Next shell</td></tr>
+<tr><td><code>composer.shell.select</code></td><td><code>return</code></td><td>View shell output</td></tr>
+<tr><td><code>composer.shell.kill</code></td><td><code>ctrl+d</code></td><td>Kill shell command</td></tr>
+<tr><td><code>composer.terminal.up</code></td><td><code>up,k</code></td><td>Previous terminal</td></tr>
+<tr><td><code>composer.terminal.down</code></td><td><code>down,j</code></td><td>Next terminal</td></tr>
+<tr><td><code>composer.terminal.select</code></td><td><code>return</code></td><td>Select terminal</td></tr>
+</table>
+<h3>dialog (20개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>dialog.select.prev</code></td><td><code>up,ctrl+p</code></td><td>Move to previous dialog item</td></tr>
+<tr><td><code>dialog.select.next</code></td><td><code>down,ctrl+n</code></td><td>Move to next dialog item</td></tr>
+<tr><td><code>dialog.select.page_up</code></td><td><code>pageup</code></td><td>Move up one page in dialog</td></tr>
+<tr><td><code>dialog.select.page_down</code></td><td><code>pagedown</code></td><td>Move down one page in dialog</td></tr>
+<tr><td><code>dialog.select.home</code></td><td><code>home</code></td><td>Move to first dialog item</td></tr>
+<tr><td><code>dialog.select.end</code></td><td><code>end</code></td><td>Move to last dialog item</td></tr>
+<tr><td><code>dialog.select.submit</code></td><td><code>return</code></td><td>Submit selected dialog item</td></tr>
+<tr><td><code>dialog.prompt.submit</code></td><td><code>return</code></td><td>Submit dialog prompt</td></tr>
+<tr><td><code>dialog.integration.rename</code></td><td><code>ctrl+r</code></td><td>Rename integration account</td></tr>
+<tr><td><code>dialog.integration.delete</code></td><td><code>ctrl+d</code></td><td>Delete integration account</td></tr>
+<tr><td><code>dialog.integration.copy</code></td><td><code>tab</code></td><td>Copy authorization link</td></tr>
+<tr><td><code>dialog.worktree.generate</code></td><td><code>tab</code></td><td>Generate worktree name</td></tr>
+<tr><td><code>dialog.move_session.new</code></td><td><code>ctrl+a</code></td><td>New worktree</td></tr>
+<tr><td><code>dialog.move_session.move</code></td><td><code>ctrl+m</code></td><td>Move session to worktree</td></tr>
+<tr><td><code>dialog.move_session.delete</code></td><td><code>ctrl+d</code></td><td>Delete worktree</td></tr>
+<tr><td><code>dialog.move_session.refresh</code></td><td><code>ctrl+r</code></td><td>Refresh worktrees</td></tr>
+<tr><td><code>dialog.mcp.toggle</code></td><td><code>space</code></td><td>Toggle MCP server</td></tr>
+<tr><td><code>dialog.plugins.error</code></td><td><code>space</code></td><td>View plugin error</td></tr>
+<tr><td><code>dialog.plugins.update</code></td><td><code>ctrl+u</code></td><td>Update plugin from plugin dialog</td></tr>
+<tr><td><code>dialog.plugins.check</code></td><td><code>ctrl+r</code></td><td>Check for plugin updates from plugin dialog</td></tr>
+</table>
+<h3>permission (1개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>permission.prompt.fullscreen</code></td><td><code>ctrl+f</code></td><td>Toggle permission prompt fullscreen</td></tr>
+</table>
+<h3>plugins (2개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>plugins.toggle</code></td><td><code>return</code></td><td>Toggle plugin</td></tr>
+<tr><td><code>plugins.list</code></td><td><code>none</code></td><td>Open plugin manager dialog</td></tr>
+</table>
+<h3>which-key (11개)</h3><table><tr><th>이름</th><th>기본값</th><th>설명</th></tr>
+<tr><td><code>which-key.toggle</code></td><td><code>ctrl+alt+k</code></td><td>Toggle which-key panel</td></tr>
+<tr><td><code>which-key.layout.toggle</code></td><td><code>ctrl+alt+shift+k</code></td><td>Switch which-key layout</td></tr>
+<tr><td><code>which-key.pending.toggle</code></td><td><code>ctrl+alt+shift+p</code></td><td>Toggle which-key pending preview</td></tr>
+<tr><td><code>which-key.group.previous</code></td><td><code>ctrl+alt+left,ctrl+alt+[</code></td><td>Previous which-key group</td></tr>
+<tr><td><code>which-key.group.next</code></td><td><code>ctrl+alt+right,ctrl+alt+]</code></td><td>Next which-key group</td></tr>
+<tr><td><code>which-key.scroll.up</code></td><td><code>ctrl+alt+up,ctrl+alt+p</code></td><td>Scroll which-key up</td></tr>
+<tr><td><code>which-key.scroll.down</code></td><td><code>ctrl+alt+down,ctrl+alt+n</code></td><td>Scroll which-key down</td></tr>
+<tr><td><code>which-key.page.up</code></td><td><code>ctrl+alt+pageup</code></td><td>Page which-key up</td></tr>
+<tr><td><code>which-key.page.down</code></td><td><code>ctrl+alt+pagedown</code></td><td>Page which-key down</td></tr>
+<tr><td><code>which-key.home</code></td><td><code>ctrl+alt+home</code></td><td>Jump to first which-key binding</td></tr>
+<tr><td><code>which-key.end</code></td><td><code>ctrl+alt+end</code></td><td>Jump to last which-key binding</td></tr>
+</table>

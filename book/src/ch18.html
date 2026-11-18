@@ -1,0 +1,124 @@
+<section class="chapter" id="ch18">
+<h1><span class="num">18장</span> CLI·클라이언트·SDK로 직접 만들기</h1>
+<p class="lead">지금까지 내부를 봤다면 이제 바깥에서 OpenCode를 다루는 세 가지 방법을 봅니다. 명령줄(CLI), 원격 클라이언트(<code>@opencode/client</code>), 프로세스 안에 품는 SDK(<code>@opencode/sdk</code>)입니다. 마지막에는 SDK로 작은 리뷰 봇을 만들어 봅니다.</p>
+
+<h2 id="ch18-1">18.1 CLI 명령 전체</h2>
+<p>전역 옵션: <code>--print-logs</code>(stderr로 로그), <code>--standalone</code>(백그라운드 서비스 대신 전용 서버), <code>--server &lt;url&gt;</code>(지정 서버에 접속).</p>
+<table>
+<tr><th>명령</th><th>인자·옵션</th></tr>
+<tr><td><code>opencode [directory]</code></td><td><code>-c/--continue</code>, <code>-s/--session</code>, <code>--prompt</code>, <code>--auto</code>(명시적으로 거부되지 않은 것 자동 승인). 숨김: <code>--yolo</code>, <code>--dangerously-skip-permissions</code></td></tr>
+<tr><td><code>run [message…]</code></td><td><code>-c</code>, <code>-s</code>, <code>--fork</code>, <code>-w/--worktree [name]</code>, <code>-m/--model provider/model#variant</code>, <code>--agent</code>, <code>--format default|json</code>, <code>-f/--file</code>(반복), <code>--title</code>, <code>--archived</code>, <code>--thinking</code>, <code>--auto</code></td></tr>
+<tr><td><code>mini</code></td><td><code>-c</code>, <code>-s</code>, <code>--fork</code>, <code>--replay/--no-replay</code>, <code>--replay-limit</code>, <code>-m/--model</code>, <code>--agent</code>, <code>--prompt</code></td></tr>
+<tr><td><code>serve</code></td><td><code>--hostname</code>, <code>--port</code>, <code>--cors</code>(반복), <code>--service</code>, <code>--stdio</code></td></tr>
+<tr><td><code>service start|restart|status|stop</code></td><td>—</td></tr>
+<tr><td><code>service get [key] [name]</code> / <code>set &lt;key&gt; &lt;value&gt; [env-value]</code> / <code>unset &lt;key&gt; [name]</code></td><td>17.17의 키</td></tr>
+<tr><td><code>pair</code></td><td><code>--url</code>, <code>--remote</code>, <code>-y/--yes</code> (5분짜리 일회용 링크)</td></tr>
+<tr><td><code>acp</code></td><td><code>--login</code> (Agent Client Protocol 서버)</td></tr>
+<tr><td><code>api &lt;operation | method path&gt;</code></td><td><code>-d/--data</code>, <code>-H/--header</code>, <code>--param k=v</code></td></tr>
+<tr><td><code>auth list</code></td><td><code>--format default|json</code></td></tr>
+<tr><td><code>auth login [target]</code></td><td>통합 ID·이름·well-known URL(<a href="#ch16-7">16.7절</a>). <code>--method</code>, <code>--answer k=v</code></td></tr>
+<tr><td><code>auth logout</code> / <code>switch</code> / <code>export</code> / <code>import</code></td><td><code>[target] [credential]</code> / <code>[file]</code></td></tr>
+<tr><td><code>mcp list</code> / <code>add &lt;name&gt; [-- command…]</code> / <code>auth</code> / <code>logout</code></td><td>add: <code>--url</code>, <code>--header k=v</code>, <code>--env k=v</code>, <code>--global</code></td></tr>
+<tr><td><code>plugin list</code> / <code>add</code> / <code>remove</code> / <code>check</code> / <code>update</code></td><td>list: <code>--builtin</code></td></tr>
+<tr><td><code>models</code></td><td>모델 목록</td></tr>
+<tr><td><code>stats</code></td><td><code>--days</code>, <code>--year</code>, <code>--all</code>, <code>--project</code>, <code>--models</code>, <code>--tools</code>, <code>--cost</code>, <code>--full</code>, <code>--limit</code>(5), <code>--json</code></td></tr>
+<tr><td><code>session list</code> / <code>delete &lt;id&gt;</code> / <code>export [id]</code> / <code>import &lt;file|url&gt;</code></td><td>list: <code>-n</code>(100), <code>--format table|json</code>; export: <code>--sanitize</code>; import: <code>--directory</code></td></tr>
+<tr><td><code>reload</code></td><td>설정 리로드</td></tr>
+<tr><td><code>upgrade</code>(별칭 <code>update</code>)</td><td><code>[target]</code>, <code>-m/--method</code></td></tr>
+<tr><td><code>uninstall</code></td><td><code>--dry-run</code>, <code>-f/--force</code>(세션 데이터·설정·상태 유지)</td></tr>
+<tr><td><code>debug agents</code> / <code>config</code> / <code>heap-dump</code> / <code>paths [name]</code></td><td>paths: db, home, data, config, cache, state, tmp, bin, log, repos</td></tr>
+</table>
+<div class="box note"><b>디버깅 첫걸음</b>
+"설정이 왜 안 먹지?"라면 <code>opencode debug config</code>로 어떤 소스가 어떤 순서로 합쳐졌는지, <code>opencode debug agents</code>로 최종 에이전트와 권한을, <code>opencode debug paths db</code>로 DB 위치를 확인하십시오. 서버 상태는 <code>opencode service status</code>입니다.</div>
+
+<h2 id="ch18-2">18.2 세 가지 접속 방식</h2>
+<div class="mermaid">
+flowchart TB
+  subgraph A["1. CLI / TUI"]
+    CLI["opencode run ..."] --> SVC1["백그라운드 서비스"]
+  end
+  subgraph B["2. @opencode/client — 네트워크"]
+    APP["내 앱"] -- "HTTP + SSE<br/>OpenCode.make({baseUrl})" --> SVC2["opencode serve"]
+  end
+  subgraph C["3. @opencode/sdk — 인프로세스"]
+    APP2["내 앱"] --> HOST["OpenCode.create()<br/>Core + Server 라우터를 메모리에서 실행<br/>(리스너 없음)"]
+  end
+</div>
+<p class="cap">그림 18-1 바깥에서 OpenCode를 다루는 방법</p>
+<table>
+<tr><th></th><th><code>@opencode/client</code></th><th><code>@opencode/sdk</code></th></tr>
+<tr><td>정체</td><td>서버 HttpApi에서 생성된 네트워크 클라이언트</td><td>Core와 Server를 품은 인프로세스 호스트</td></tr>
+<tr><td>전송</td><td><code>fetch</code>로 실행 중인 서버에</td><td>"서버의 조립된 HTTP 라우터를 메모리에서 실행, 리스너도 네트워크 홉도 없음"</td></tr>
+<tr><td>의존</td><td>Promise 루트는 Core·Effect 런타임 없음, 브라우저 안전</td><td>core, server, plugin, client</td></tr>
+<tr><td>진입점</td><td><code>.</code>, <code>effect</code>, <code>effect/api</code>, <code>solid</code>, <code>service</code>, <code>mcp</code></td><td><code>.</code>, <code>./effect</code>, <code>./workerd</code>, <code>./workerd/effect</code></td></tr>
+<tr><td>플러그인</td><td>없음(순수 API 소비자)</td><td><code>plugins: [...]</code>, <code>opencode.plugin(p)</code>, 세션별 <code>instances</code></td></tr>
+</table>
+<div class="box why"><b>SDK가 클라이언트를 "재사용"하는 이유</b>
+SDK 내부는 <code>OpenCode.make({ baseUrl: "http://opencode.local", fetch: host.fetch })</code>입니다. 즉 메모리 속 라우터를 가리키는 클라이언트일 뿐입니다. 덕분에 원격 클라이언트·임베디드 호스트·플러그인이 같은 메서드 이름, 같은 오류, 같은 스트림 타입을 씁니다. 로컬에서 SDK로 프로토타입한 코드를 서버 연결로 바꿀 때 거의 고칠 것이 없습니다.</div>
+
+<h2 id="ch18-3">18.3 @opencode/client로 원격 서버 다루기</h2>
+<pre><code><span class="src">client.ts</span>import { OpenCode } from "@opencode/client"
+import { Service } from "@opencode/client/service"   // Node 전용
+
+const endpoint = await Service.ensure()               // 로컬 백그라운드 서비스 확보
+const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
+
+const session = await client.session.create({ location: { directory: process.cwd() } })
+
+// 1) 구독을 먼저 시작해야 합니다. iterable은 첫 next()에서야 연결을 엽니다.
+//    server.connected는 types 필터와 무관하게 항상 먼저 전달됩니다(shared-events.ts).
+const events = client.event.subscribe({ types: ["session.step.ended"] })[Symbol.asyncIterator]()
+await events.next()                                   // server.connected 수신 = 연결 완료
+
+// 2) 그다음 프롬프트를 보냅니다.
+await client.session.prompt({ sessionID: session.id, text: "README를 요약해 줘" })
+
+for (let r = await events.next(); !r.done; r = await events.next()) {
+  if (r.value.data?.sessionID === session.id) console.log(r.value.type, r.value.data)
+}</code></pre>
+<p class="cap">공식 문서 <code>services/site/src/docs/content/build/client/index.mdx</code>의 예시(<code>Service.ensure</code>, <code>Service.headers</code>, <code>session.create/prompt</code>, <code>event.subscribe({types})</code>)를 조합한 코드입니다.</p>
+<ul>
+<li>이벤트 구독은 <b>실시간 전용</b>입니다. 재생도 자동 재연결도 없으므로, 프롬프트를 보낸 뒤에 구독을 시작하면 그사이 끝난 실행을 놓칩니다. 누락 없이 관찰하려면 영속 로그 <code>client.experimental.session.log({ sessionID, after, follow: true })</code>를 쓰십시오(6.4절).</li>
+<li>네이티브·RPC 구독자는 하나의 지연 연결을 공유하고, 늦게 붙은 구독자는 <code>server.connected</code>를 받습니다.</li>
+<li>플러그인 RPC: 플러그인의 <code>./rpc</code> 계약을 import해 <code>client.rpc(Def)</code>로 호출합니다.</li>
+</ul>
+
+<h2 id="ch18-4">18.4 @opencode/sdk로 임베딩</h2>
+<pre><code><span class="src">packages/sdk/README.md 기반</span>import { OpenCode } from "@opencode/sdk"
+
+await using opencode = await OpenCode.create({
+  plugins: [myPlugin],
+  database: { path: "./sessions.db" },   // 기본은 ":memory:"
+})
+const session = await opencode.sessions.create({ location: { directory: "/workspace" } })
+await opencode.sessions.prompt({ sessionID: session.id, text: "Review the changes" })</code></pre>
+<ul>
+<li><b>기본 DB는 메모리</b>입니다. 재시작 복구(<code>SessionRestart</code>)를 쓰려면 파일 경로가 필요합니다.</li>
+<li><b>세션 선택 플러그인</b>(<code>instances: { key(session), configure(key) }</code>): 예컨대 Slack 스레드마다 다른 플러그인 집합. README는 이것이 "권한이나 저장소 격리 경계가 아니다"라고 경고합니다.</li>
+<li><b>Cloudflare workerd</b>: <code>OpenCodeWorkerd.create({ storage: state.storage, config, plugins })</code>로 Durable Object 안에서 실행합니다.</li>
+<li>플러그인 순서: SDK·인스턴스 플러그인은 내장 플러그인 뒤 <code>pre</code> 그룹에 들어가며, 설정으로 ID를 지정해 끌 수 있습니다.</li>
+</ul>
+
+<h2 id="ch18-5">18.5 실습: PR 리뷰 봇 설계</h2>
+<p>지금까지 배운 것을 조합해 "PR이 열리면 보안 리뷰를 남기는 봇"을 설계해 봅니다.</p>
+<div class="mermaid">
+flowchart LR
+  GH["GitHub 웹훅<br/>PR opened"] --> BOT["봇 서버 (내 코드)"]
+  BOT --> SDK["OpenCode.create<br/>DB: ./bot.db<br/>plugins: [reviewPlugin]"]
+  SDK --> W["opencode.worktree.create<br/>(PR 브랜치)"]
+  W --> S["sessions.create(location=worktree)<br/>agent = reviewer"]
+  S --> P["sessions.command<br/>name=review, text=pr"]
+  P --> IDLE["idle 훅 / step 이벤트로 완료 감지"]
+  IDLE --> OUT["마지막 assistant 텍스트를<br/>PR 코멘트로 게시"]
+</div>
+<p class="cap">그림 18-2 SDK 기반 리뷰 봇의 흐름</p>
+<ol>
+<li><b>에이전트</b>: 플러그인에서 <code>ctx.agent.transform</code>으로 <code>reviewer</code>를 정의합니다. 기본 권한이 전체 허용이므로 <code>edit: *</code> deny, <code>shell: *</code> deny를 먼저 두고 그 뒤에 <code>git diff *</code>, <code>git log *</code> allow를 덧붙입니다(12.3절, 11장).</li>
+<li><b>격리</b>: PR마다 워크트리를 만들고 그 디렉터리를 Location으로 세션을 만듭니다. Location이 다르면 설정·도구·권한 그래프도 따로 컴파일됩니다(5장).</li>
+<li><b>명령 실행</b>: <code>prompt</code>에 <code>"/review pr"</code> 문자열을 넣으면 그냥 텍스트로 접수됩니다. 슬래시 명령은 별도 API <code>session.command({ sessionID, name: "review", text: "pr" })</code>(<code>POST /api/session/:id/command</code>)로 실행합니다(13.6절).</li>
+<li><b>무인 실행</b>: 사람이 없으므로 ask가 생기면 막힙니다. 권한을 명시적으로 allow/deny만 쓰게 설계하거나, 무인(Unattended) 컨텍스트에서 ask가 deny로 정착되는 점을 이용합니다(11.2절).</li>
+<li><b>완료 감지</b>: <code>session.step.ended</code>와 세션 유휴 이벤트를 구독하거나 <code>session.wait</code>를 씁니다.</li>
+<li><b>내구성</b>: DB를 파일로 두면 봇이 재시작돼도 진행 중이던 리뷰가 클레임을 통해 재개됩니다(7.6절).</li>
+<li><b>비용</b>: 같은 저장소의 PR이 이어지면 프롬프트 캐시가 적중하도록 <code>warming</code>이나 <code>cache.ttl: "1h"</code>를 검토합니다(9장, 17장).</li>
+</ol>
+</section>

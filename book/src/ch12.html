@@ -1,0 +1,185 @@
+<section class="chapter" id="ch12">
+<h1><span class="num">12장</span> 에이전트와 백그라운드 서브에이전트</h1>
+<p class="lead">V2에서 "에이전트"는 모델·지침·권한·스텝 한도를 묶은 이름 붙은 설정입니다. 그리고 2.3.0부터 서브에이전트는 기본적으로 백그라운드에서 돌며, 유휴가 될 때마다 결과를 부모 세션의 inbox(7.3절)에 합성 입력(steer)으로 넣어 보고합니다. 부모는 기다리지 않고 다른 일을 하다가 다음 스텝 경계에서 그 보고를 받습니다. 이 장은 그 둘을 다룹니다.</p>
+
+<h2 id="ch12-1">12.1 에이전트 = 이름 붙은 실행 프로필</h2>
+<table>
+<tr><th>필드</th><th>의미</th></tr>
+<tr><td><code>id</code>, <code>name</code></td><td>식별자, 표시 이름</td></tr>
+<tr><td><code>model?</code></td><td><code>{id, providerID, variant?}</code></td></tr>
+<tr><td><code>request</code></td><td><code>settings</code>·<code>headers</code>·<code>body</code> 덧씌우기. 단 공식 이전 문서에 따르면 에이전트 <code>request.body</code>는 보관만 되고 모델 요청에는 실리지 않습니다(12.3절)</td></tr>
+<tr><td><code>system?</code></td><td>시스템 프롬프트 — 기본 프롬프트를 <b>대체</b></td></tr>
+<tr><td><code>description?</code></td><td>언제 쓰는 에이전트인지(서브에이전트 선택에 사용)</td></tr>
+<tr><td><code>mode</code></td><td><code>primary</code> · <code>subagent</code> · <code>all</code></td></tr>
+<tr><td><code>hidden</code></td><td>목록·<code>@</code> 자동완성에서 숨김</td></tr>
+<tr><td><code>color?</code>, <code>steps?</code></td><td>색(<code>#RRGGBB</code>), 최대 스텝 수</td></tr>
+<tr><td><code>permissions</code></td><td>권한 규칙 배열</td></tr>
+</table>
+<p><code>agent.ts</code> 자체에는 내장 에이전트가 하나도 없습니다. 레지스트리일 뿐이고, 내장 에이전트는 <code>plugin/agent.ts</code>(<code>opencode.agent</code>)와 <code>plugin/plan.ts</code>라는 <b>내장 플러그인</b>이 변환으로 등록합니다. 사용자 정의 에이전트도 같은 방식(설정 플러그인)으로 들어옵니다.</p>
+<div class="mermaid">
+flowchart LR
+  P1["plugin/agent.ts<br/>build·general·explore·<br/>compaction·title·summary"] --> REG["Agent 레지스트리<br/>(변환 재생)"]
+  P2["plugin/plan.ts<br/>plan"] --> REG
+  EXT["외부 플러그인<br/>ctx.agent.transform"] --> REG
+  CFG["config/plugin/agent.ts<br/>opencode.json agents +<br/>.opencode/agents/*.md"] --> REG
+  REG --> DEF{"기본 에이전트 선택"}
+  DEF --> D1["default_agent (선택 가능하면)"]
+  DEF --> D2["없으면 build"]
+  DEF --> D3["없으면 첫 선택 가능 에이전트"]
+</div>
+<p class="cap">그림 12-1 에이전트가 모이는 경로 (뒤에 등록된 변환이 우선)</p>
+
+<h2 id="ch12-2">12.2 내장 에이전트</h2>
+<table>
+<tr><th>ID</th><th>mode</th><th>숨김</th><th>프롬프트</th><th>특징</th></tr>
+<tr><td><code>build</code></td><td>primary</td><td>—</td><td>기본</td><td>기본 에이전트, <code>question</code> 허용</td></tr>
+<tr><td><code>plan</code></td><td>primary</td><td>—</td><td>기본</td><td><code>~/.opencode/plan/</code> 밖 편집 금지. 진입·이탈 시 <code>&lt;system-reminder&gt;</code>를 꼬리 근처에 주입해 캐시 접두 유지</td></tr>
+<tr><td><code>general</code></td><td>subagent</td><td>—</td><td>—</td><td>범용 하위 작업, 질문·중첩 서브에이전트 금지</td></tr>
+<tr><td><code>explore</code></td><td>subagent</td><td>—</td><td><code>PROMPT_EXPLORE</code>(읽기 전용 파일 탐색 전문가)</td><td>읽기·검색·셸·웹만 허용</td></tr>
+<tr><td><code>compaction</code></td><td>primary</td><td>예</td><td>—</td><td>압축 요약 모델 지정용</td></tr>
+<tr><td><code>title</code></td><td>primary</td><td>예</td><td><code>PROMPT_TITLE</code></td><td>제목 생성. 모델 미지정 시 작은 모델</td></tr>
+<tr><td><code>summary</code></td><td>primary</td><td>예</td><td><code>PROMPT_SUMMARY</code></td><td>요약</td></tr>
+</table>
+<div class="box warn"><b>비판적으로 읽기</b>
+<code>explore</code>의 프롬프트는 "셸은 읽기 전용으로만"이라고 말하지만, 권한은 <code>shell</code>을 <code>resource: "*"</code>로 허용합니다. 즉 읽기 전용은 <b>프롬프트로만</b> 요청되고 강제되지는 않습니다. 비공식 감사 문서도 이 점을 지적합니다. 위험한 저장소에서는 <code>agents.explore.permissions</code>로 셸을 좁히는 편이 안전합니다.</div>
+
+<div class="box use" id="use-agents"><b>이렇게 씁니다 — 작업에 맞는 에이전트 고르기: /agents · shift+tab</b>
+<p>에이전트는 "이름 붙은 실행 프로필"이므로, 에이전트를 바꾼다는 것은 시스템 프롬프트·도구·권한·스텝 한도를 한꺼번에 바꾼다는 뜻입니다. 바꾸는 방법은 두 가지입니다.</p>
+<ul>
+<li><code>/agents</code>(<code>ctrl+x a</code>) — 목록에서 고르기. 서브에이전트 전용이나 숨긴 에이전트는 나오지 않습니다.</li>
+<li><b><code>shift+tab</code></b> — 주 에이전트를 차례로 돌리기(Tab은 자동 완성에 쓰입니다).</li>
+</ul>
+<p><b>예 — 계획 먼저, 구현은 나중에.</b></p>
+<ol>
+<li><code>shift+tab</code>으로 <b>plan</b>을 고르고 "결제 모듈을 Stripe에서 Toss로 옮기는 계획 세워 줘"라고 시킵니다. plan은 계획 디렉터리(<code>~/.opencode/plan/</code>) 밖은 편집할 수 없으므로(11.4절), 에이전트는 코드를 읽고 계획만 내놓습니다. 막히는 것은 편집 도구뿐이고 셸은 열려 있습니다. 셸 명령까지 확인받고 싶다면 <code>agents.plan.permissions</code>에 shell <b>ask</b> 규칙을 덧붙입니다. deny가 아니라 ask를 쓰는 이유가 있습니다. deny로 전부 막으면 셸 도구가 목록에서 빠져 build와 오갈 때 캐시가 깨지고(<a href="#ch09-1">9.1절</a>), ask는 도구를 남겨 둔 채 실행할 때만 묻습니다.</li>
+<li>계획을 보고 "3단계는 빼"처럼 다듬습니다.</li>
+<li>다시 <code>shift+tab</code>으로 <b>build</b>를 고르고 "좋아, 그대로 진행해"라고 보냅니다. 이제 편집 도구가 열린 상태로 구현을 시작합니다.</li>
+</ol>
+<p>목록에서 고르기만 해서는 서버에 아무것도 가지 않습니다. 고른 에이전트는 <b>다음 프롬프트를 보낼 때</b> 세션에 기록되고(<code>agent-switched</code> 이벤트), 그 다음 스텝부터 새 권한·도구·프롬프트가 적용됩니다. 에이전트마다 마지막에 쓴 모델을 세션 안에서 따로 기억하므로, build는 큰 모델, plan은 빠른 모델처럼 나눠 둘 수 있습니다. 다만 이렇게 나누면 전환할 때마다 모델이 바뀌어 캐시를 잃으므로, 짧게 계획하고 오래 구현하는 경우에만 득입니다(<a href="#ch09-1">9.1절</a>).</p>
+<p>에이전트를 오가면 시스템 프롬프트와 도구 목록이 바뀌어 캐시가 깨질 수 있습니다(9.1절 "캐시를 깨지 않는 습관"). 계획 → 구현처럼 <b>큰 단계의 경계에서</b> 바꾸는 것이 좋습니다.</p>
+</div>
+
+<h2 id="ch12-3">12.3 사용자 정의 에이전트</h2>
+<h3>(a) JSON 설정</h3>
+<pre><code><span class="src">opencode.jsonc</span>{
+  "default_agent": "build",
+  "agents": {
+    "reviewer": {
+      "mode": "subagent",
+      "description": "변경 사항을 보안 관점에서 검토할 때 사용",
+      "model": "anthropic/claude-sonnet-5#high",
+      "steps": 30,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "git diff *", "effect": "allow" },
+        { "action": "shell", "resource": "git log *", "effect": "allow" }
+      ]
+    },
+    "explore": { "disabled": true }
+  }
+}</code></pre>
+<div class="box warn"><b>허용 목록은 "먼저 전부 거부"부터</b>
+새 에이전트는 <code>Info.default</code>의 <code>{action:"*", resource:"*", effect:"allow"}</code>로 시작하고 설정 규칙은 그 <b>뒤에 덧붙습니다</b>. 그래서 <code>git diff *</code> allow만 적으면 다른 셸 명령도 여전히 첫 줄의 전체 허용에 걸립니다. 셸을 몇 개 명령으로 제한하려면 위 예처럼 <code>shell: *</code> deny를 먼저 두고 허용할 명령을 뒤에 나열하십시오. <code>edit</code>만 막으면 셸 리다이렉션(<code>&gt; file</code>)으로 파일을 쓰는 길은 열려 있다는 점도 기억하십시오.</div>
+<h3>(b) 마크다운 파일</h3>
+<pre><code><span class="src">.opencode/agents/team/reviewer.md → ID "team/reviewer"</span>---
+description: 변경 사항을 보안 관점에서 검토할 때 사용
+mode: subagent
+model: anthropic/claude-sonnet-5#high
+steps: 30
+---
+당신은 보안 리뷰어입니다. 입력 검증, 인증, 비밀 노출을 중점적으로 봅니다.</code></pre>
+<ul>
+<li>경로: 각 설정 디렉터리(전역 <code>~/.config/opencode</code>, 모든 상위 <code>.opencode/</code>)의 <code>{agent,agents}/**/*.md</code>, <code>{mode,modes}/*.md</code>(후자는 primary 강제).</li>
+<li>본문이 <code>system</code>이 됩니다. <b><code>.claude/agents</code>와 <code>.agents/agents</code>는 읽지 않습니다</b>(이 디렉터리들은 스킬에만 씀).</li>
+<li>V2 전용 키(<code>permissions</code>, <code>request</code>, <code>system</code>, <code>disabled</code>)가 없고 모르는 키가 있으면 V1 형식으로 읽어 마이그레이션합니다.</li>
+</ul>
+<h3>병합 규칙</h3>
+<ul>
+<li><code>disabled: true</code>는 내장 에이전트까지 제거합니다.</li>
+<li>기존 에이전트는 설정된 필드만 덮어씁니다. <code>headers</code>/<code>body</code>는 병합, <code>permissions</code>는 <b>덧붙임</b>(뒤 규칙 우선).</li>
+<li>최상위 <code>permissions</code>는 모든 에이전트에 덧붙습니다.</li>
+<li>V2에서는 에이전트의 <code>temperature</code>/<code>top_p</code>가 효과 없습니다. V1 형식 설정은 <code>request.body</code>로 자동 이전되지만, 공식 이전 문서(<code>migrate-v1.mdx</code>)는 "에이전트 <code>request.body</code>는 보관되지만 모델로 전송되지 않는다"고 밝힙니다. 샘플링 값은 <b>모델 변형(variant)</b>의 <code>body</code>에 두십시오(16.3절).</li>
+</ul>
+
+<h2 id="ch12-4">12.4 서브에이전트 도구의 흐름</h2>
+<pre><code><span class="src">tool/plugin/subagent.ts — 도구 설명</span>"Subagents always run in the background: the call returns immediately with a sessionID,
+ and you receive a &lt;subagent&gt; message each time the child goes idle, including after later work."</code></pre>
+<p>서브에이전트 도구가 불리면 다음 순서로 진행됩니다.</p>
+<ol>
+<li><b>중첩 확인</b>: 서브에이전트 아래에 또 서브에이전트를 두는 것은 기본으로 막혀 있습니다. 허용 깊이는 <code>experimental.subagent_depth</code>이고 기본값은 <b>1</b>입니다.</li>
+<li><b>대상 확인</b>: 부를 에이전트를 찾되, 주 에이전트(<code>mode === "primary"</code>)는 서브에이전트로 부를 수 없어 거부합니다.</li>
+<li><b>권한 검사</b>: 그 에이전트를 서브에이전트로 써도 되는지 <code>permission.assert(action:"subagent", resources:[agent])</code>로 확인합니다.</li>
+<li><b>세션 준비</b>: 이미 만든 자식 세션의 <code>sessionID</code>를 주면 그 자식에게 후속 지시를 보내고, 주지 않으면 <code>parentID</code>로 부모에 딸린 새 자식 세션을 만듭니다. 모델은 직접 지정한 값 → 에이전트에 설정된 모델 → 부모 모델 순서로 정합니다.</li>
+<li><b>일 맡기기</b>: "You are a subagent spawned by another session.\n"(너는 다른 세션이 만든 서브에이전트다)라는 머리말을 붙인 지시를 자식의 inbox에 접수합니다(<code>resume:false</code>).</li>
+<li><b>백그라운드 실행</b>: <code>SubagentJob.start</code>가 백그라운드 Job으로 <code>execution.resume(childID)</code>를 돌립니다. 사용자가 직접 취소해야만 자식이 멈추고, 서버가 꺼지면 나중에 이어서 할 수 있는 상태로 남습니다.</li>
+<li><b>바로 반환</b>: 부모는 기다리지 않고 <code>{status:"running", output:"...DO NOT sleep, poll, proactively check on its progress, or duplicate this subagent's work…"}</code>를 즉시 받습니다. 기다리거나, 진행 상황을 확인하러 가거나, 같은 일을 하지 말라는 안내입니다. 결과는 자식이 일을 멈출 때마다 <code>&lt;subagent&gt;</code> 메시지로 전달됩니다.</li>
+</ol>
+
+<h2 id="ch12-5">12.5 유휴 때마다 보고하기</h2>
+<div class="mermaid">
+sequenceDiagram
+  participant P as 부모 세션
+  participant ST as subagent 도구
+  participant C as 자식 세션
+  participant DB as SQLite
+  P->>ST: subagent(explore, "인증 코드 위치 찾아줘") ▶
+  ST->>C: 생성 + 프롬프트 접수 ▶
+  ST-->>P: ◀ 즉시 반환 {sessionID, running}
+  P->>P: 다른 일 계속 (사용자와 대화도 가능)
+  C->>C: drain (여러 스텝)
+  C->>DB: Succeeded + 클레임 해제 + outbox 행 (한 트랜잭션) ▶
+  DB-->>P: ◀ 부모 inbox에 synthetic(steer) 접수 + wake
+  Note over P: subagent sessionID=... state=completed 블록 수신
+  P->>ST: subagent(sessionID=..., "그 파일의 테스트도 찾아줘") ▶
+  ST->>C: steer로 후속 지시 ▶
+  C->>DB: 다시 유휴 → 또 보고 ▶
+</div>
+<p class="cap">그림 12-2 백그라운드 서브에이전트의 보고 주기</p>
+<p>그림을 따라가 보겠습니다. 부모가 <code>subagent</code> 도구를 부르면 도구는 자식 세션을 만들고 프롬프트를 접수한 뒤, 기다리지 않고 <code>{sessionID, running}</code>을 바로 돌려줍니다. 그래서 부모는 그동안 다른 일을 계속할 수 있습니다. 자식이 일을 마치면 결과가 부모 inbox에 steer로 들어가 부모를 깨우고, 부모가 같은 <code>sessionID</code>로 다시 지시하면 이 주기가 되풀이됩니다.</p>
+<p><b>처음 유휴</b>는 자식의 첫 drain이 끝나 <code>Succeeded</code>를 기록하는 순간입니다. 그림의 "Succeeded + 클레임 해제 + outbox 행" 줄이 첫 보고이고, 마지막 줄의 "다시 유휴"는 후속 지시를 처리한 뒤 맞는 두 번째 유휴입니다. 첫 호출의 "생성 + 프롬프트 접수"와 후속 호출의 "steer로 후속 지시"는 사실 같은 동작입니다. 둘 다 자식 inbox에 프롬프트를 접수하고(<code>sessions.prompt</code>), 전달 방식을 따로 지정하지 않으므로 기본값 steer가 쓰입니다. 차이는 첫 호출에는 <code>sessionID</code>가 없어 <code>parentID</code>로 자식 세션을 새로 만든다는 것뿐입니다. 후속 지시는 자식이 아직 일하는 중이면 다음 스텝 경계에서 합류하고(7.4절), 쉬고 있으면 자식을 다시 깨웁니다.</p>
+<p><b>outbox</b>는 부모에게 보낼 보고를 미리 적어 두는 "발송 대기함" 행입니다. 7.6절의 부팅 복구에서 "끝난 자식은 outbox 재생"으로 잠깐 나왔던 바로 그것입니다. 이 행에는 이미 형식이 갖춰진 보고가 담겨 있으므로, 전달 전에 서버가 죽어도 다음 부팅 때 자식을 건드리지 않고 이 행만 다시 보내면 됩니다.</p>
+<p>그렇다면 보고는 누가 보낼까요? 자식 모델도 부모도 아니고, 서버 코어의 <b>SessionExecution</b>이 보냅니다. 또 부모가 outbox를 직접 읽지도 않습니다. 보고가 부모에게 닿는 길은 둘입니다.</p>
+<ol>
+<li><b>평소 경로(즉시 전달).</b> 자식의 바쁜 기간이 끝나면 RunCoordinator가 <code>settled</code> 훅을 부릅니다. SessionExecution은 이 안에서 outbox 행을 준비하고(<code>subagentReport.prepare</code>), 종료 이벤트와 한 트랜잭션으로 커밋한 뒤 곧바로 전달합니다(<code>settlement.deliver</code>). 전달은 보고를 부모 inbox에 <code>synthetic</code> 항목, <code>delivery: "steer"</code>로 접수하고 부모를 깨우는 일입니다. 부모 모델은 이 보고를 inbox에서 승격된 메시지로 받습니다.</li>
+<li><b>예외 경로(부팅 때 재전달).</b> 커밋은 됐는데 전달 전에 서버가 죽은 경우에만 해당합니다. 다음 부팅 때 재시작 복구 코드가 남아 있는 outbox 행을 찾아 같은 방식으로 다시 보냅니다(7.6절).</li>
+</ol>
+<pre><code><span class="src">v2 packages/core/src/session/execution.ts — settled 훅 (요약)</span>settled: (sessionID, exit, reason) =&gt;
+  ...
+    const settlement = yield* subagentReport.prepare(sessionID, outcome)
+    ...
+    yield* publishTerminal(bus, sessionID, outcome, settlement.commit)
+    // Post-commit delivery is best effort: a retained outbox marker is recovered on the
+    // next restart, and a delivery defect must not fail the settled hook.
+    yield* settlement.deliver.pipe(
+      Effect.ignoreCause({ log: "Error", message: "Subagent report delivery failed" }),
+    )</code></pre>
+<p>주석대로 커밋 뒤의 전달은 "최선 노력"입니다. 전달이 실패해도 settled 훅 자체는 실패하지 않고, 남은 outbox 행이 다음 재시작 때 회수됩니다. 그러니 outbox는 부모가 열어 보는 우편함이 아니라, 전달에 실패했을 때 다시 보내려고 남겨 두는 발송 기록입니다. 그림 12-2에서 SQLite에서 부모로 가는 화살표도 DB가 스스로 보낸다는 뜻이 아니라, 커밋 직후 SessionExecution이 부모 inbox에 접수한다는 뜻입니다.</p>
+<pre><code><span class="src">부모가 받는 보고 메시지 형식</span>&lt;subagent sessionID="…" state="completed|error|cancelled|running" description="…"&gt;
+…마지막 완료 assistant 텍스트 또는 오류 메시지…
+Background work still running:
+  …자식의 셸·이미지·손자 작업 목록…
+&lt;/subagent&gt;</code></pre>
+<ul>
+<li>보고 본문: 성공이면 이번 바쁜 기간에 완료된 마지막 assistant 텍스트, 실패면 오류 메시지, 사용자 중단이면 "Subagent cancelled".</li>
+<li>자식이 유휴가 됐는데 자신의 백그라운드 작업이 남아 있으면 <code>state="running"</code>으로 보고하여 부모가 부분 답을 완료로 착각하지 않게 합니다(2.3.0 변경).</li>
+<li>남은 작업이 끝났다는 알림도 <b>자식이 다시 보고</b>해서 전달합니다. 자식의 백그라운드 셸이 끝나면 그 완료 알림이 자식 세션을 다시 깨우고(7.7절), 자식은 결과를 처리한 뒤 다시 유휴가 되면서 새 보고를 보냅니다. 이 보고도 outbox를 거쳐 부모 inbox에 steer로 들어가 부모를 깨우며, 남은 작업이 없으면 <code>state="completed"</code>로 갑니다. 그래서 부모는 상태를 폴링하며 기다릴 필요가 없습니다.</li>
+<li><b>outbox 행은 종료 이벤트·클레임 해제와 같은 트랜잭션</b>에 쓰입니다. 커밋 후 전달 전에 크래시하면 다음 부팅에서 outbox로부터 재전달됩니다.</li>
+</ul>
+<div class="box why"><b>왜 서브에이전트는 항상 백그라운드로 돌까요?</b>
+V1의 <code>task</code> 도구는 기본적으로 부모를 막고 기다렸습니다. 서브에이전트 셋을 띄우면 부모는 셋이 다 끝날 때까지 멈춰 있었고, 그 사이 사용자는 아무것도 할 수 없었습니다. 맡겨 두고 나중에 받는 <code>background=true</code>도 있었지만 <code>OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS</code>를 켜야 쓸 수 있는 실험 기능이었습니다. 그 모드에서도 V1은 자식을 별도 세션으로 만들고, 끝나면 결과를 합성 프롬프트로 부모에게 넣어 주었습니다. 겉모양은 지금과 비슷합니다. 달라진 것은 "맡겨 두고 나중에 받는다"는 약속을 어디에 두느냐입니다.
+<ol>
+<li><b>V1은 메모리에 두었습니다.</b> 백그라운드 작업 목록은 프로세스 메모리의 Map이었고(<code>v1 packages/core/src/background-job.ts</code>), 완료를 기다리는 것도 메모리 위의 파이버였습니다. 서버가 꺼지면 맡긴 일과 받을 보고가 함께 사라졌고, 보고도 끝날 때 한 번뿐이었습니다.</li>
+<li><b>V2는 디스크와 inbox에 둡니다.</b> 자식의 종료 기록과 보낼 보고(outbox 행)가 한 트랜잭션으로 SQLite에 저장되므로, 전달 전에 서버가 죽어도 다음 부팅 때 다시 보냅니다(7.6절). 보고는 부모 inbox에 steer로 들어가 부모를 깨우고, 부모가 일하는 중이면 다음 스텝 경계에서 합류합니다(7.4절). 자식이 유휴가 될 때마다 보고하므로 후속 지시의 결과와 남은 작업의 완료도 같은 길로 돌아옵니다.</li>
+</ol>
+<p><b>쉽게 비유하면</b>, V1은 "조수에게 일을 맡겼으면 답을 받아서 다음 일을 하자"를 기본으로 삼았다고 볼 수 있습니다. 따로 일시키기도 가능했지만, 나중에 결과를 챙기는 장치는 메모리에 의존했습니다. V2는 "답이 오면 서버가 기록하고 부모에게 전달해 다시 일하게 한다"는 체계를 갖췄습니다. 그래서 부모가 먼저 다른 일을 하고, 보고가 도착하면 이어서 판단하는 방식으로 통일하기 쉬워졌다고 해석할 수 있습니다. 이는 앞서 확인한 구조를 바탕으로 한 <b>기본값 선택의 이유에 대한 추정</b>이며, 개발자가 밝힌 의도는 아닙니다.</p>
+V2도 처음부터 백그라운드만 쓴 것은 아닙니다. 2.2.x까지는 <code>background</code> 파라미터가 있었고 기본은 V1처럼 기다리기였습니다(실행 중에 사용자가 백그라운드로 돌릴 수는 있었습니다). 2.3.0에서 이 파라미터를 없애고 모든 서브에이전트를 백그라운드로 돌리게 했습니다(커밋 <code>66e2fb94b1</code>, "always run subagents in the background"). 대신 V1의 background 모드 때부터 그랬듯이, 모델이 기다리거나 폴링하지 않도록 도구 결과와 설명에 강하게 적어 둡니다.</div>
+
+<h2 id="ch12-6">12.6 캐시 친화성과 포크 인식</h2>
+<ul>
+<li><b>부모와 자식의 요청을 같은 캐시 쪽으로 보냅니다.</b> 서브에이전트의 세션은 부모와 같은 캐시 라우팅 키(affinity)를 씁니다. 프로바이더에 “이 요청들은 같은 묶음이니 같은 캐시 쪽으로 보내 달라”고 알리는 표시입니다. 요청 앞부분의 내용도 같아야 이미 처리한 내용을 캐시에서 재사용할 수 있습니다(7.7절).
+<p>각 세션은 도구 목록과 지침을 따로 불러 조립합니다. 이때 여러 세션에서 공통일 가능성이 큰 지침을 앞에 배치해, 내용이 같으면 프롬프트 캐시를 재사용하도록 합니다(9.4절). 부모·자식 전용의 프롬프트 공유 기능이거나 두 요청의 앞부분이 같다는 보장은 아닙니다. 자식이 부모의 대화 이력 전체를 물려받는 것은 아니며, 자식에게 맡길 작업 지시는 별도로 전달합니다(12.4절).</p></li>
+<li><b>대화를 복사해 갈라졌다는 사실을 에이전트에게 알려 줍니다.</b> <code>/fork</code>는 기존 대화 이력을 이어받는 새 세션을 만듭니다. 2.3.0부터는 새 세션의 에이전트에게 “원본에서 갈라진 대화이며, 원본에서 시작한 작업은 원본의 몫”이라는 안내도 줍니다. 원본의 작업 결과를 계속 기다리거나 같은 일을 다시 하는 혼동을 막기 위한 것입니다(15.9절).</li>
+<li><b>오래 걸리는 명령은 계속 돌려 두고 다른 일을 합니다.</b> 셸 명령이 끝나기를 기다리느라 에이전트가 멈춰 있으면, 사용자는 <code>ctrl+b</code>로 그 명령을 백그라운드로 옮길 수 있습니다(<code>Session.background</code>, 11.7절). 명령은 계속 실행되고 에이전트는 다른 일을 이어 갑니다. 끝나면 OpenCode가 에이전트에게 알려 주므로, “끝났는지 반복해서 확인하지 말라”는 안내도 함께 전달합니다. 서브에이전트는 처음부터 부모와 별도로 실행되므로 이런 전환이 필요하지 않습니다.</li>
+</ul>
+</section>

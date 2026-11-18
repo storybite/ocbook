@@ -1,0 +1,148 @@
+<section class="chapter" id="appA">
+<h1><span class="num">부록 A</span> 슬래시 명령 총람</h1>
+<p class="lead">TUI의 내장 슬래시 명령을 한곳에 모았습니다. 각 명령은 한 줄 설명과 함께, 그 명령이 생겨난 원리와 실제 사용 예가 있는 본문의 🛠 상자로 링크됩니다. 본문에 마땅한 자리가 없는 명령은 A.2절에서 자세히 설명합니다. 키 표기에서 <code>ctrl+x u</code>는 리더 키 <code>ctrl+x</code>를 누르고 뗀 뒤 <code>u</code>를 누른다는 뜻입니다.</p>
+
+<h2 id="appA-1">A.1 내장 명령 한눈에 보기</h2>
+<p>프롬프트 맨 앞에서 <code>/</code>를 치면 아래 명령과 서버 명령(<code>/init</code>, <code>/review</code>, MCP 프롬프트, 내가 만든 명령)이 가나다순으로 섞여 나옵니다(<a href="#use-slash">13.6 슬래시 명령 찾기</a>). "세션 화면"이라고 적은 명령은 세션을 연 상태에서만 동작합니다.</p>
+
+<h3>세션 고르기·만들기</h3>
+<table>
+<tr><th>명령</th><th>별칭</th><th>기본 키</th><th>한 줄 설명</th><th>자세히</th></tr>
+<tr><td><code>/sessions</code></td><td><code>/resume</code> <code>/continue</code></td><td><code>ctrl+x l</code></td><td>세션 목록에서 검색·전환·삭제·이름 변경</td><td><a href="#use-sessions">7.2</a></td></tr>
+<tr><td><code>/new</code></td><td></td><td><code>ctrl+x n</code></td><td>새 세션 시작(지금 에이전트·모델 유지)</td><td><a href="#use-sessions">7.2</a></td></tr>
+<tr><td><code>/clear</code></td><td></td><td></td><td>현재 탭을 닫고 새 세션. 기록은 지우지 않음</td><td><a href="#use-sessions">7.2</a></td></tr>
+<tr><td><code>/rename</code></td><td></td><td><code>ctrl+r</code></td><td>세션 제목 바꾸기. 인자 없이 보내면 자동 생성(세션 화면)</td><td><a href="#use-sessions">7.2</a></td></tr>
+<tr><td><code>/open</code></td><td><code>/projects</code> <code>/project</code></td><td><code>ctrl+o</code></td><td>모든 프로젝트의 최근 세션·프로젝트·워크트리 빠른 전환</td><td><a href="#use-worktrees">5.7</a></td></tr>
+</table>
+
+<h3>작업 폴더</h3>
+<table>
+<tr><th>명령</th><th>별칭</th><th>기본 키</th><th>한 줄 설명</th><th>자세히</th></tr>
+<tr><td><code>/worktrees</code></td><td></td><td></td><td>Git 워크트리 만들기·전환·세션 옮기기·삭제</td><td><a href="#use-worktrees">5.7</a></td></tr>
+<tr><td><code>/cd 경로</code></td><td></td><td></td><td>현재 세션의 작업 폴더를 옮김(다음 스텝 경계에서 적용)</td><td><a href="#use-worktrees">5.7</a></td></tr>
+<tr><td><code>/terminal</code></td><td></td><td></td><td>세션 옆에 서버 기계의 영구 터미널 열기(세션 화면)</td><td><a href="#use-terminal">4.7</a></td></tr>
+</table>
+
+<h3>대화 다루기</h3>
+<table>
+<tr><th>명령</th><th>별칭</th><th>기본 키</th><th>한 줄 설명</th><th>자세히</th></tr>
+<tr><td><code>/btw 질문</code></td><td></td><td></td><td>이력에 남기지 않는 곁가지 질문(세션 화면)</td><td><a href="#use-steer">7.4</a></td></tr>
+<tr><td><code>/goal 목표</code></td><td></td><td></td><td>완료 조건을 만족할 때까지 계속 일하게 함. <code>pause</code>·<code>resume</code>·<code>clear</code>(서버 내장 플러그인 명령)</td><td><a href="#use-goal">15.12</a></td></tr>
+<tr><td><code>/compact</code></td><td></td><td><code>ctrl+x c</code></td><td>요약 + 최근 원문으로 압축(모델 호출)</td><td><a href="#use-compact">9.6</a></td></tr>
+<tr><td><code>/undo</code></td><td></td><td><code>ctrl+x u</code></td><td>마지막 프롬프트만큼 파일·대화 되돌리기</td><td><a href="#use-undo">11.9</a></td></tr>
+<tr><td><code>/redo</code></td><td></td><td><code>ctrl+x r</code></td><td>되돌리기 전부 취소(다음 프롬프트 전까지만)</td><td><a href="#use-undo">11.9</a></td></tr>
+<tr><td><code>/timeline</code></td><td></td><td><code>ctrl+x g</code></td><td>내 프롬프트 목록에서 이동·되돌리기·복사·포크</td><td><a href="#use-undo">11.9</a></td></tr>
+<tr><td><code>/fork</code></td><td></td><td></td><td>전체 또는 특정 프롬프트 직전까지 복사한 새 세션</td><td><a href="#use-undo">11.9</a> · <a href="#use-fork">7.7</a></td></tr>
+<tr><td><code>/diff</code></td><td></td><td></td><td>변경 비교 뷰어(브랜치·커밋·미커밋·마지막 턴)</td><td><a href="#use-undo">11.9</a></td></tr>
+<tr><td><code>/skills</code></td><td></td><td></td><td>스킬을 골라 <code>@스킬</code>로 프롬프트에 넣기</td><td><a href="#use-skills">13.5</a></td></tr>
+<tr><td><code>/copy</code></td><td></td><td><code>ctrl+x y</code></td><td>마지막 답변의 글 부분 복사</td><td><a href="#appA-copy">A.2</a></td></tr>
+<tr><td><code>/export</code></td><td></td><td><code>ctrl+x x</code></td><td>대화 기록을 Markdown·JSON으로 내보내기</td><td><a href="#appA-export">A.2</a></td></tr>
+<tr><td><code>/editor</code></td><td></td><td><code>ctrl+x e</code></td><td>외부 편집기로 프롬프트 작성</td><td><a href="#appA-editor">A.2</a></td></tr>
+</table>
+
+<h3>에이전트·모델·연결</h3>
+<table>
+<tr><th>명령</th><th>별칭</th><th>기본 키</th><th>한 줄 설명</th><th>자세히</th></tr>
+<tr><td><code>/agents</code></td><td></td><td><code>ctrl+x a</code></td><td>주 에이전트 고르기(<code>shift+tab</code>으로 순환)</td><td><a href="#use-agents">12.2</a></td></tr>
+<tr><td><code>/models</code></td><td></td><td><code>ctrl+x m</code></td><td>모델 고르기, 즐겨찾기(<code>f2</code>로 최근 순환)</td><td><a href="#use-models">16.3</a></td></tr>
+<tr><td><code>/variants</code></td><td><code>/thinking</code> <code>/effort</code></td><td></td><td>추론 단계 고르기(<code>ctrl+t</code>로 순환)</td><td><a href="#use-models">16.3</a></td></tr>
+<tr><td><code>/connect</code></td><td></td><td></td><td>프로바이더 연결 후 모델 선택</td><td><a href="#use-connect">16.6</a></td></tr>
+<tr><td><code>/mcps</code></td><td></td><td></td><td>MCP 서버 상태, 연결·끊기·재시도·로그인</td><td><a href="#use-mcps">14.3</a></td></tr>
+<tr><td><code>/status</code></td><td></td><td><code>ctrl+x s</code></td><td>MCP 서버 상태 짧게 보기</td><td><a href="#use-mcps">14.3</a></td></tr>
+<tr><td><code>/usage</code></td><td></td><td></td><td>OpenCode Console 모델별 남은 예산</td><td><a href="#use-stats">9.7</a></td></tr>
+<tr><td><code>/stats</code></td><td></td><td></td><td>올해 모든 프로젝트의 토큰·활동 달력</td><td><a href="#use-stats">9.7</a></td></tr>
+</table>
+
+<h3>서버·화면·기타</h3>
+<table>
+<tr><th>명령</th><th>별칭</th><th>기본 키</th><th>한 줄 설명</th><th>자세히</th></tr>
+<tr><td><code>/reload</code></td><td></td><td></td><td>설정·플러그인·MCP 다시 읽기(프로세스는 유지)</td><td><a href="#use-service">4.3</a></td></tr>
+<tr><td><code>/restart</code></td><td></td><td></td><td>공유 백그라운드 서버 다시 시작(관리형 서비스만)</td><td><a href="#use-service">4.3</a></td></tr>
+<tr><td><code>/update</code></td><td></td><td></td><td>새 버전 설치. 끝나면 TUI 종료 후 직접 재실행</td><td><a href="#use-service">4.3</a></td></tr>
+<tr><td><code>/pair</code></td><td><code>/web</code></td><td></td><td>QR·링크로 다른 기기 연결(일회용)</td><td><a href="#use-pair">4.6</a></td></tr>
+<tr><td><code>/plugins</code></td><td></td><td></td><td>플러그인 목록, TUI 플러그인 켜기/끄기, 업데이트</td><td><a href="#use-plugins">15.2</a></td></tr>
+<tr><td><code>/settings</code></td><td></td><td></td><td>화면 설정 약 37개를 즉시 변경</td><td><a href="#use-settings">17.15</a></td></tr>
+<tr><td><code>/themes</code></td><td></td><td></td><td>테마 실시간 미리보기와 전환</td><td><a href="#use-settings">17.15</a></td></tr>
+<tr><td><code>/help</code></td><td></td><td></td><td>명령 팔레트(<code>ctrl+p</code>) 안내</td><td><a href="#appA-help">A.2</a></td></tr>
+<tr><td><code>/exit</code></td><td><code>/quit</code> <code>/q</code></td><td><code>ctrl+c</code> <code>ctrl+d</code></td><td>TUI 종료(서버의 작업은 계속)</td><td><a href="#appA-exit">A.2</a></td></tr>
+<tr><td><code>/debug</code></td><td></td><td></td><td>버전·OS·세션 ID 등 진단 정보 복사</td><td><a href="#appA-debug">A.2</a></td></tr>
+<tr><td><code>/highlights</code></td><td></td><td></td><td>이번 버전의 새 기능 보기</td><td><a href="#appA-highlights">A.2</a></td></tr>
+</table>
+
+<h3>서버 명령</h3>
+<table>
+<tr><th>명령</th><th>한 줄 설명</th><th>자세히</th></tr>
+<tr><td><code>/init</code></td><td>가이드에 따라 AGENTS.md 작성</td><td><a href="#ch13-6">13.6</a></td></tr>
+<tr><td><code>/review</code></td><td>변경 리뷰(<code>commit</code>, <code>branch</code>, <code>pr</code>)</td><td><a href="#ch13-6">13.6</a></td></tr>
+<tr><td><code>/서버:프롬프트</code></td><td>MCP 프롬프트가 자동으로 명령이 됨</td><td><a href="#ch14-3">14.3</a></td></tr>
+<tr><td><code>/내명령</code></td><td><code>.opencode/commands/*.md</code> 또는 <code>commands</code> 설정</td><td><a href="#use-slash">13.6</a></td></tr>
+</table>
+
+<h2 id="appA-2">A.2 본문에서 다루지 않은 명령</h2>
+<p>원리 장에 붙이기에는 작지만, 알아 두면 손이 덜 가는 명령들입니다.</p>
+
+<div class="box use" id="appA-copy"><b>/copy — 마지막 답변 복사 (ctrl+x y)</b>
+<p>가장 최근 assistant 메시지의 <b>글(text) 부분만</b> 줄바꿈으로 이어 클립보드에 넣습니다. 생각 과정과 도구 출력은 빠집니다. 그보다 새로운 압축 요약이 있으면 그 요약을 복사합니다.</p>
+<p><b>예.</b> 에이전트가 "변경 요약"을 마지막에 정리해 주었다면 <code>ctrl+x y</code> 한 번으로 PR 설명란에 붙여 넣을 수 있습니다.</p>
+<p><b>주의.</b> 여기서 "메시지 하나"는 모델 호출 한 번(스텝 하나, 8.1절)입니다. 마지막 스텝이 도구 호출뿐이었다면 "No text content found in last assistant message"가 뜨고, 같은 턴의 앞 스텝에 있던 글은 함께 복사되지 않습니다. 대화 전체가 필요하면 명령 팔레트(<code>ctrl+p</code>)의 "Copy session transcript"(생각 과정 포함 Markdown)를, 세션 ID가 필요하면 "Copy session ID"를 쓰십시오.</p>
+</div>
+
+<div class="box use" id="appA-export"><b>/export — 대화 기록 내보내기 (ctrl+x x)</b>
+<p>옵션 대화상자에서 형식과 내용을 고릅니다.</p>
+<table>
+<tr><th>형식</th><th>옵션(기본값)</th><th>결과</th></tr>
+<tr><td>Markdown</td><td>Thinking(포함), Tools(포함)</td><td>제목·ID·날짜 머리말 아래 User, Shell, Assistant 절. 합성 메시지와 압축 메시지는 빠짐</td></tr>
+<tr><td>JSON</td><td>Sanitize(끔)</td><td>정착된 메시지 전체. Sanitize를 켜면 글·제목·경로·파일 내용이 <code>[redacted:종류:id]</code>로 바뀌어 구조만 남음</td></tr>
+</table>
+<p>Enter를 누르면 <b>현재 폴더</b>에 <code>session-&lt;무작위 UUID&gt;.md</code>(또는 <code>.json</code>)로 저장하고 경로를 보여 줍니다(<code>c</code>로 경로 복사). 클립보드로 바로 복사할 수도 있습니다. 파일 이름이 세션 제목이 아니라 매번 새 UUID라는 점에 유의하십시오.</p>
+<p><b>예 1 — 동료에게 작업 과정 공유.</b> Markdown에 Tools를 끄고 내보내면, 도구 출력 없이 질문과 답만 담긴 읽기 좋은 문서가 됩니다.</p>
+<p><b>예 2 — 버그 제보에 구조만 첨부.</b> JSON에 Sanitize를 켜면 코드와 경로가 가려지므로, 어떤 순서로 무엇이 오갔는지만 개발자에게 보여 줄 수 있습니다.</p>
+<p><b>주의.</b> 내보내기는 되돌리기 상태를 거르지 않는 것으로 보입니다. <code>/undo</code>로 숨겼지만 아직 확정하지 않은 메시지가 들어갈 수 있으므로, 깔끔한 기록이 필요하면 확정한 뒤 내보내십시오.</p>
+</div>
+
+<div class="box use" id="appA-editor"><b>/editor — 외부 편집기로 프롬프트 쓰기 (ctrl+x e)</b>
+<p>지금 프롬프트 칸의 내용(붙여 넣은 긴 글 포함)을 파일로 꺼내 외부 편집기로 엽니다. 편집기를 닫으면 그 내용이 프롬프트 칸을 대신하고, <code>@</code> 멘션 강조도 다시 맞춰집니다. 서버에는 아무것도 보내지 않습니다. 보낼지는 돌아와서 정합니다.</p>
+<p>편집기는 환경 변수 <code>$VISUAL</code>, 없으면 <code>$EDITOR</code>로 정합니다. 둘 다 없으면 "Failed to open editor"가 뜹니다. VS Code를 쓴다면 창을 닫을 때까지 기다리도록 <code>--wait</code>을 붙여야 합니다.</p>
+<pre><code># macOS·Linux (~/.zshrc 등)
+export EDITOR="code --wait"
+
+# Windows PowerShell ($PROFILE)
+$env:EDITOR = "code --wait"</code></pre>
+<p><b>예.</b> 요구 사항이 열 줄이 넘는 작업 지시, 표나 코드 조각이 섞인 프롬프트는 TUI 입력 칸보다 편집기에서 쓰는 편이 훨씬 편합니다.</p>
+</div>
+
+<div class="box use" id="appA-help"><b>/help — 무엇이든 ctrl+p</b>
+<p><code>/help</code>는 한 줄만 보여 줍니다. "어디서든 <code>ctrl+p</code>를 누르면 쓸 수 있는 모든 동작과 명령이 보인다." 명령 팔레트에는 슬래시 이름이 없는 동작(예: "Copy session transcript", 탭 다시 열기)까지 들어 있고, 각 동작의 단축키도 함께 보입니다. 명령 이름이 기억나지 않을 때는 슬래시 목록보다 팔레트가 빠릅니다.</p>
+</div>
+
+<div class="box use" id="appA-exit"><b>/exit — TUI 끝내기 (/quit, /q, ctrl+c, ctrl+d)</b>
+<p>TUI 화면을 닫습니다. <code>ctrl+c</code>와 <code>ctrl+d</code>는 프롬프트 칸이 비어 있거나 포커스가 없을 때만 종료로 동작하므로, 쓰던 글이 실수로 날아가지 않습니다. 슬래시 없이 <code>exit</code>, <code>quit</code>, <code>:q</code>만 치고 Enter를 눌러도 종료됩니다.</p>
+<p>가장 중요한 점은 <b>TUI를 끝내도 서버의 작업은 계속된다</b>는 것입니다. 맡겨 둔 일은 백그라운드 서버에서 이어지고, 다시 열어 <code>/sessions</code>로 확인하면 됩니다(<a href="#use-recovery">7.6 TUI를 닫아도 일은 계속된다</a>).</p>
+</div>
+
+<div class="box use" id="appA-debug"><b>/debug — 진단 정보</b>
+<p>버전(채널), 날짜, OS, 터미널, 세션 ID, 모델을 보여 줍니다. Enter를 누르면 전부 클립보드에 복사됩니다("Debug info copied"). 버그를 제보할 때 이 내용을 그대로 붙이면 재현에 필요한 환경 정보가 한 번에 전달됩니다. 이름이 비슷한 "Toggle debug panel"(슬래시 이름 없음)은 별개의 기능입니다.</p>
+</div>
+
+<div class="box use" id="appA-highlights"><b>/highlights — 새 기능 보기</b>
+<p>"What's new in &lt;버전&gt;" 창에 이번 버전의 주요 변경을 보여 줍니다(<code>↑</code>/<code>↓</code>, <code>j</code>/<code>k</code>, PgUp/PgDn으로 스크롤). 업데이트한 뒤 처음 시작할 때, 홈 화면이 한가하면 한 번 자동으로 뜹니다. 이 자동 표시는 <code>/settings</code>의 "Release highlights"로 끌 수 있습니다. 빌드에 하이라이트가 없으면 명령이 보이지 않습니다.</p>
+</div>
+
+<h2 id="appA-3">A.3 슬래시 없이 쓰는 주요 키</h2>
+<p>자주 쓰는 동작 중에는 슬래시 명령이 없는 것도 많습니다. 손에 익혀 두면 좋은 키만 추렸습니다. 전체 목록은 <a href="#ch17-16">17.16 키바인드 전체 목록</a>에 있습니다.</p>
+<table>
+<tr><th>키</th><th>하는 일</th><th>자세히</th></tr>
+<tr><td><code>ctrl+p</code></td><td>명령 팔레트(모든 동작 검색)</td><td><a href="#appA-help">A.2</a></td></tr>
+<tr><td>Enter</td><td>보내기. 일하는 중이면 steer(다음 스텝 경계에서 반영)</td><td><a href="#use-steer">7.4</a></td></tr>
+<tr><td><code>ctrl+x Enter</code></td><td>queue로 보내기(지금 일이 끝난 뒤 처리)</td><td><a href="#use-steer">7.4</a></td></tr>
+<tr><td><code>ctrl+x q</code></td><td>대기 중인 프롬프트 관리(세션 화면)</td><td><a href="#use-steer">7.4</a></td></tr>
+<tr><td>Esc</td><td>현재 실행 중단</td><td><a href="#use-shell">11.7</a></td></tr>
+<tr><td><code>ctrl+b</code></td><td>막고 있는 도구를 백그라운드로</td><td><a href="#use-shell">11.7</a></td></tr>
+<tr><td><code>shift+tab</code></td><td>주 에이전트 순환</td><td><a href="#use-agents">12.2</a></td></tr>
+<tr><td><code>ctrl+t</code></td><td>추론 단계(variant) 순환</td><td><a href="#use-models">16.3</a></td></tr>
+<tr><td><code>f2</code> / <code>shift+f2</code></td><td>최근 모델 순환</td><td><a href="#use-models">16.3</a></td></tr>
+<tr><td><code>ctrl+shift+t</code></td><td>닫은 탭 다시 열기</td><td><a href="#use-sessions">7.2</a></td></tr>
+<tr><td><code>ctrl+x t</code></td><td>터미널 창 보이기/숨기기</td><td><a href="#use-terminal">4.7</a></td></tr>
+<tr><td><code>@</code></td><td>파일·에이전트·스킬 멘션 자동 완성</td><td><a href="#use-skills">13.5</a></td></tr>
+</table>
+</section>

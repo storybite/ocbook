@@ -1,0 +1,163 @@
+<section class="chapter" id="ch13">
+<h1><span class="num">13장</span> 스킬·명령·지침 파일</h1>
+<p class="lead">모델에게 "무엇을 알고, 어떻게 일할지"를 알려 주는 수단은 세 가지입니다. 항상 실리는 지침(AGENTS.md), 필요할 때만 불러오는 스킬, 사람이 호출하는 슬래시 명령입니다. 셋은 언제 컨텍스트에 들어가는지가 다릅니다.</p>
+
+<h2 id="ch13-1">13.1 세 수단의 비교</h2>
+<table>
+<tr><th></th><th>지침 (AGENTS.md)</th><th>스킬 (SKILL.md)</th><th>명령 (/command)</th></tr>
+<tr><td>컨텍스트 진입</td><td>항상(베이스라인)</td><td>목록만 항상, 본문은 필요 시 <code>skill</code> 도구로</td><td>사용자가 호출할 때 프롬프트로 확장</td></tr>
+<tr><td>누가 트리거</td><td>하네스</td><td>모델(또는 사용자)</td><td>사용자</td></tr>
+<tr><td>적합한 내용</td><td>프로젝트 규칙, 빌드 방법</td><td>특정 작업 절차, 스크립트, 참고 자료</td><td>자주 쓰는 지시 템플릿</td></tr>
+<tr><td>비용</td><td>매 요청</td><td>설명 한 줄 + 로드 시 본문</td><td>호출 시에만</td></tr>
+</table>
+<div class="mermaid">
+flowchart LR
+  subgraph ALWAYS["항상 컨텍스트에"]
+    AG["AGENTS.md 전문"]
+    SL["스킬 목록 (id·이름·설명)"]
+  end
+  subgraph ONDEMAND["필요할 때만"]
+    SK["skill 도구 → SKILL.md 본문 + 파일 목록"]
+    CMD["/command → 템플릿 확장 → 프롬프트"]
+  end
+  SL -- "모델이 판단" --> SK
+  U(["사용자"]) -- "/review" --> CMD
+</div>
+<p class="cap">그림 13-1 점진적 공개(progressive disclosure)</p>
+<div class="box why"><b>왜 스킬을 "목록만" 싣나요?</b>
+스킬 스무 개의 본문을 모두 실으면 매 요청 수만 토큰이 낭비되고, 관련 없는 지시가 모델을 산만하게 합니다. 설명 한 줄씩만 보여 주고 모델이 "지금 이 작업에 필요하다"고 판단할 때 본문을 불러오게 하면, 컨텍스트는 작게 유지하면서 지식은 무한히 늘릴 수 있습니다.</div>
+
+<h2 id="ch13-2">13.2 AGENTS.md 탐색 규칙</h2>
+<pre><code><span class="src">config/plugin/instruction.ts</span>const project = discovery.project &amp;&amp; FSUtil.contains(root, start)
+const stop = FSUtil.contains(home, start) ? home : root
+const globalFile = yield* fs.resolve(join(global.config, "AGENTS.md"))</code></pre>
+<div class="mermaid">
+flowchart BT
+  W["작업 디렉터리 /home/me/repo/pkg/api"] --> U1["/home/me/repo/pkg"] --> U2["/home/me/repo (프로젝트 루트)"] --> U3["/home/me (HOME) — 여기서 멈춤"]
+  G["~/.config/opencode/AGENTS.md (전역)"]
+  C["instructions 설정 (경로·glob·URL)"]
+</div>
+<p class="cap">그림 13-2 위로 걸어 올라가며 AGENTS.md 수집</p>
+<ul>
+<li><b>전역</b>: <code>~/.config/opencode/AGENTS.md</code>(또는 <code>$OPENCODE_CONFIG_DIR/AGENTS.md</code>).</li>
+<li><b>프로젝트</b>: 작업 디렉터리부터 위로. 작업 디렉터리가 HOME 아래면 HOME에서, 아니면 프로젝트 루트에서 멈춥니다. 가까운 것부터 정렬.</li>
+<li><b>설정</b>: <code>instructions: string[]</code> — 절대 경로/glob, <code>~/</code>, 상위로 찾는 상대 glob, <code>http(s)</code> URL(5초 타임아웃, 설정 리로드 시에만 가져오고 실패하면 마지막 정상본 유지).</li>
+<li>순서: 전역 → 프로젝트(가까운 것→먼 것) → 설정.</li>
+<li>렌더링: <code>"Instructions from: &lt;path&gt;\n&lt;content&gt;"</code>. 모든 후보 파일을 100ms 디바운스로 감시합니다.</li>
+</ul>
+<div class="box warn"><b>CLAUDE.md는 읽지 않습니다</b>
+V1은 프로젝트에서 <code>AGENTS.md</code> → <code>CLAUDE.md</code> → <code>CONTEXT.md</code>(폐기 예정) 순으로 찾고 <code>~/.claude/CLAUDE.md</code>도 읽었습니다. V2는 <b><code>AGENTS.md</code>만</b> 찾습니다. 마이그레이션 문서는 CLAUDE.md 내용을 AGENTS.md로 옮기고 "호환성 이슈를 제보하라"고 안내합니다. 즉 의도된 단절이라기보다 인정된 간극입니다. <code>.claude/</code> 디렉터리는 스킬 탐색에만 쓰입니다.</div>
+<h3>하위 디렉터리 AGENTS.md의 지연 주입</h3>
+<p><code>read</code> 도구가 성공하면, 읽은 파일의 디렉터리에서 Location 루트(제외)까지 올라가며 AGENTS.md를 찾아 <b>영속 합성 메시지</b>로 주입합니다. 메타데이터 <code>instruction.paths</code>가 유일한 장부여서, 압축이나 되돌리기로 그 메시지가 사라지면 다시 주입됩니다.</p>
+<div class="box why"><b>왜 하위 AGENTS.md는 "나중에"일까요?</b>
+모노레포에는 패키지마다 AGENTS.md가 있을 수 있습니다. 시작할 때 전부 실으면 작업과 무관한 규칙이 컨텍스트를 채웁니다. 모델이 실제로 그 디렉터리의 파일을 읽는 순간 그 지역 규칙을 주입하면, 필요한 규칙이 필요한 때 정확히 도착합니다.</div>
+
+<h2 id="ch13-3">13.3 SKILL.md 형식</h2>
+<pre><code><span class="src">.opencode/skills/release-notes/SKILL.md</span>---
+name: Release notes
+description: CHANGELOG 항목을 작성하거나 릴리스 노트를 만들 때 사용
+metadata:
+  opencode/autoinvoke: true
+# disable-model-invocation: true   # 모델 자동 호출 금지(사용자만)
+---
+1. `git log` 로 직전 태그 이후 커밋을 모읍니다.
+2. scripts/group.py 로 분류합니다.
+...</code></pre>
+<table>
+<tr><th>항목</th><th>규칙</th></tr>
+<tr><td>ID</td><td>스킬의 고유 이름입니다. <code>SKILL.md</code>가 든 폴더 이름을 씁니다. 스킬 폴더 바로 아래에 <code>foo.md</code> 파일 하나만 두면 <code>foo</code>가 ID입니다.</td></tr>
+<tr><td>name</td><td>화면에 보이는 이름입니다. frontmatter에 <code>name</code>이 있으면 그 값, 없으면 ID를 씁니다.</td></tr>
+<tr><td>autoinvoke<br>(자동 사용)</td><td>켜 두면 모델이 필요할 때 이 스킬을 알아서 꺼내 씁니다. 꺼 두면 사용자가 직접 부를 때만 씁니다. 아무것도 적지 않으면 켜집니다.</td></tr>
+<tr><td>스캔</td><td>얕은 폴더부터 6단계 깊이까지 찾고, 숨김·무시 폴더는 건너뜁니다. <code>SKILL.md</code>를 찾은 폴더 아래는 더 뒤지지 않습니다.</td></tr>
+</table>
+<p>각 규칙을 조금 더 풀면 다음과 같습니다.</p>
+<ul>
+<li><b>ID</b>: 스킬의 고유 이름은 <code>SKILL.md</code>가 들어 있는 폴더 이름입니다. 스킬 폴더 바로 아래에 <code>foo.md</code>처럼 파일 하나만 두면 파일 이름 <code>foo</code>가 ID가 됩니다.</li>
+<li><b>name</b>: 화면에 보이는 이름입니다. frontmatter에 <code>name</code>을 적으면 그 값을 쓰고, 없으면 ID를 씁니다.</li>
+<li><b>autoinvoke(자동 사용)</b>: <code>SKILL.md</code> 맨 위의 <code>---</code> 두 줄 사이에서, <code>metadata</code> 아래에 <code>opencode/autoinvoke: true</code>를 적으면 켜지고 <code>false</code>를 적으면 꺼집니다. 이 설정이 없을 때는 <code>disable-model-invocation: true</code>를 적어도 꺼집니다. 둘 다 적지 않으면 켜집니다.</li>
+<li><b>스캔</b>: 스킬 폴더는 가까운(얕은) 폴더부터 차례로 뒤지되 6단계 깊이까지만 내려갑니다. 숨김 폴더와 무시 대상 폴더는 건너뜁니다. 어떤 폴더에서 <code>SKILL.md</code>를 찾으면 그 폴더를 스킬 하나로 보고 그 아래 폴더는 더 뒤지지 않습니다.</li>
+</ul>
+
+<h2 id="ch13-4">13.4 스킬 탐색 디렉터리</h2>
+<table>
+<tr><th>출처</th><th>경로</th></tr>
+<tr><td>설정 디렉터리</td><td><code>~/.config/opencode/{skill,skills}</code>, 각 상위 <code>.opencode/{skill,skills}</code></td></tr>
+<tr><td>호환 디렉터리</td><td><code>~/.claude/skills</code>, <code>~/.agents/skills</code>, 각 상위의 <code>.claude/skills</code>, <code>.agents/skills</code></td></tr>
+<tr><td>설정 키</td><td><code>skills: [...]</code> — 경로 또는 <code>http(s)</code> URL</td></tr>
+<tr><td>원격 레지스트리</td><td><code>&lt;url&gt;/index.json</code>(<code>{skills:[{name, version?, files[]}]}</code>) → <code>~/.cache/opencode/skills/&lt;hash&gt;/&lt;name&gt;</code>에 버전 단위 원자적 교체</td></tr>
+<tr><td>내장</td><td><code>opencode</code>, <code>report</code>(진단 스냅숏 포함) — 가상 경로 <code>skill://…</code></td></tr>
+<tr><td>플러그인</td><td><code>ctx.skill.transform</code>으로 파일 없는 가상 스킬 등록 가능</td></tr>
+</table>
+<p><code>OPENCODE_DISABLE_CLAUDE_CODE</code>(또는 <code>_SKILLS</code>)로 <code>.claude</code> 탐색을 끌 수 있습니다.</p>
+
+<h2 id="ch13-5">13.5 스킬이 모델에게 보이는 방식</h2>
+<p>스킬은 도구 설명이 아니라 지침 블록(<code>core/skill-guidance</code>)으로 광고됩니다. 권한상 <code>skill:&lt;id&gt;</code>가 거부되지 않고, 설명이 있으며, autoinvoke가 false가 아닌 것만 실립니다.</p>
+<pre><code><span class="src">skill/instructions.ts (요약)</span>Skills provide specialized instructions and workflows for specific tasks.
+Use the skill tool to load a skill when a task matches its description.
+&lt;available_skills&gt;
+  &lt;skill&gt;&lt;id&gt;release-notes&lt;/id&gt;&lt;name&gt;Release notes&lt;/name&gt;&lt;description&gt;…&lt;/description&gt;&lt;/skill&gt;
+&lt;/available_skills&gt;</code></pre>
+<p>지침 소스이므로 변경은 델타로 전달됩니다("새 스킬이 생겼습니다…", "다음 스킬 ID는 더 이상 쓰지 마십시오…").</p>
+<pre><code><span class="src">skill 도구의 결과</span>&lt;skill_content name="Release notes"&gt;
+# Skill: Release notes
+…본문…
+Base directory for this skill: /repo/.opencode/skills/release-notes
+Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.
+&lt;skill_files&gt;&lt;file&gt;scripts/group.py&lt;/file&gt;…(최대 10개)&lt;/skill_files&gt;
+&lt;/skill_content&gt;</code></pre>
+<p><code>skill</code> 도구는 항상 직접 도구(<code>codemode: false</code>)이며 권한 <code>skill</code>을 스킬 ID로 검사합니다. 사용자가 스킬을 직접 지정하면 같은 <code>&lt;skill_content&gt;</code> 모양이 프롬프트에 주입됩니다. 조직 정책 <code>skill.use</code>로 특정 스킬을 막을 수 있습니다.</p>
+
+<div class="box use" id="use-skills"><b>이렇게 씁니다 — 스킬을 직접 불러 쓰기: /skills · @</b>
+<p>스킬은 보통 모델이 설명(description)을 보고 필요할 때 스스로 불러옵니다. 하지만 "이번에는 이 절차를 꼭 따라라"라고 지정하고 싶을 때가 있습니다. <b><code>@스킬이름</code>으로 스킬을 직접 지정하는 기능은 V2에서 지원하며, 이 책에서 비교하는 V1(1.19.5)에는 없습니다.</b></p>
+<ol>
+<li><code>/skills</code>를 입력하면 현재 위치에서 쓸 수 있는 스킬 목록(이름과 설명)이 뜹니다.</li>
+<li>하나를 고르면 즉시 실행되는 것이 아니라, 커서 위치에 강조된 <code>@스킬이름</code>이 들어갑니다. 프롬프트 칸에서 <code>@</code>를 쳐서 고를 수도 있습니다.</li>
+<li>나머지 요청을 이어 쓰고 보냅니다. 보내는 순간 서버가 스킬 본문을 읽어 <b>이 사용자 메시지 앞에</b> 붙여 모델에게 전달합니다.</li>
+</ol>
+<p><b>예.</b> <code>release-notes</code> 스킬이 있다면 <code>@release-notes v2.3.0 태그 이후 변경으로 릴리스 노트 써 줘</code>처럼 보냅니다. 모델이 스킬을 찾아 읽는 단계를 건너뛰고 처음부터 그 절차대로 일합니다. 스킬 본문이 그 메시지에 통째로 들어가므로, 긴 스킬을 매번 붙이면 토큰이 그만큼 늘어난다는 점도 기억하십시오.</p>
+</div>
+
+<h2 id="ch13-6">13.6 슬래시 명령</h2>
+<p>코어에서 명령은 데이터가 아니라 <b>코드</b>입니다: <code>{name, description?, execute(invocation)}</code>. 설정 명령은 이 인터페이스를 템플릿 확장으로 구현한 것입니다.</p>
+<table>
+<tr><th>종류</th><th>내용</th></tr>
+<tr><td>내장 <code>/init</code></td><td>가이드에 따라 AGENTS.md 작성(기존 CLAUDE.md, <code>.cursor/rules/</code> 등을 참고)</td></tr>
+<tr><td>내장 <code>/review</code></td><td>변경 리뷰 [commit|branch|pr], 기본은 커밋되지 않은 변경</td></tr>
+<tr><td>MCP 프롬프트</td><td><code>&lt;server&gt;:&lt;prompt&gt;</code>로 자동 등록, 위치 인자를 선언된 arguments에 순서대로 매핑</td></tr>
+<tr><td>사용자 정의</td><td><code>commands</code> 설정 키 또는 <code>{command,commands}/**/*.md</code></td></tr>
+</table>
+<pre><code><span class="src">.opencode/commands/fix-issue.md → /fix-issue 123 "로그인 실패"</span>---
+description: 이슈를 재현하고 수정
+agent: build
+model: openai/gpt-5.5#medium
+subagent: false
+---
+GitHub 이슈 #$1 을 처리합니다. 요약: $2
+현재 브랜치: !`git branch --show-current`</code></pre>
+<ul>
+<li><code>$ARGUMENTS</code>: 입력 전체. <code>$1…$N</code>: 위치 인자(따옴표·<code>[Image N]</code> 인식). <b>가장 큰 번호가 나머지를 모두 삼킵니다.</b></li>
+<li><code>!`cmd`</code>: 셸 출력으로 치환(Location 디렉터리, 동시 최대 2개).</li>
+<li>자리표시자가 없으면 입력을 빈 줄 뒤에 덧붙입니다.</li>
+<li><code>subagent: true</code>이거나 대상 에이전트가 subagent 모드면 자식 세션에서 실행. 아니면 에이전트·모델을 바꾼 뒤 같은 세션에 프롬프트(기본 전달 steer).</li>
+</ul>
+<div class="box use" id="use-slash"><b>이렇게 씁니다 — 슬래시 명령 찾기와 내 명령 만들기</b>
+<p>프롬프트 칸의 <b>맨 앞에서</b> <code>/</code>를 치면 자동 완성 목록이 열립니다. 이 목록에는 두 출처가 섞여 있습니다.</p>
+<ul>
+<li><b>TUI 내장 명령</b>: <code>/new</code>, <code>/undo</code>, <code>/worktrees</code> 같은 화면 조작 명령. 별칭도 각각 한 줄씩 나옵니다(<code>/sessions</code>, <code>/resume</code>, <code>/continue</code>).</li>
+<li><b>서버 명령</b>: 위 표의 <code>/init</code>, <code>/review</code>, MCP 프롬프트(<code>서버:프롬프트</code>), 그리고 내가 만든 명령.</li>
+</ul>
+<p>둘은 구분 없이 <b>가나다(알파벳)순</b>으로 섞이고, 입력한 글자로 흐릿하게(fuzzy) 걸러 최대 10개를 보여 줍니다. 앞글자가 일치하는 항목이 위로 올라옵니다. 스킬은 이 목록이 아니라 <code>@</code> 목록에 있습니다. 명령 이름이 기억나지 않으면 <code>ctrl+p</code>로 명령 팔레트를 여십시오. 슬래시 이름이 없는 동작까지 모두 검색됩니다.</p>
+<p><b>인자를 받는 명령</b>(<code>/cd</code>, <code>/rename</code>, <code>/btw</code>와 내가 만든 명령)은 목록에서 고르면 <code>/이름 </code>까지만 넣어 주므로 뒤에 인자를 이어 쓰면 됩니다. 인자가 없는 내장 명령은 고르는 즉시 실행됩니다.</p>
+<p><b>예 — 매번 치는 지시를 명령으로 만들기.</b> PR을 올리기 전에 늘 "변경을 검토하고, 테스트를 돌리고, 커밋 메시지를 제안해"라고 쓴다면 <code>.opencode/commands/ship.md</code>를 만듭니다.</p>
+<pre><code>---
+description: PR 올리기 전 점검
+agent: build
+---
+현재 변경을 검토하고 테스트를 실행한 뒤, 문제가 없으면 커밋 메시지를 제안합니다.
+특히 확인할 점: $ARGUMENTS
+현재 브랜치: !`git branch --show-current`</code></pre>
+<p>이제 <code>/ship 결제 모듈의 예외 처리</code>라고 보내면 <code>$ARGUMENTS</code> 자리에 "결제 모듈의 예외 처리"가 들어가고, <code>!`…`</code> 자리는 셸 실행 결과로 바뀐 뒤 프롬프트로 접수됩니다. 새 명령 파일을 만든 뒤 목록에 안 보이면 <code>/reload</code>(4.3절)를 하십시오.</p>
+<p>전체 내장 명령의 목록과 짧은 설명은 <a href="#appA">부록 A</a>에 있습니다.</p>
+</div>
+
+</section>
