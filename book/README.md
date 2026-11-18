@@ -4,10 +4,9 @@
 
 ## 실행
 ```bash
-pip install -e .                         # 저장소 루트에서, 엔진 설치 (한 번만)
-cd book
-python -m bookbot build                  # src/chNN.html → opencode-v2.html → 챗봇 색인(.bookbot/corpus)
-python -m bookbot serve                  # http://127.0.0.1:8771/
+# 저장소 루트에서
+python -m bookbot build book             # src/chNN.html → opencode-v2.html → 챗봇 색인(.bookbot/corpus)
+python -m bookbot serve book             # http://127.0.0.1:8771/
 ```
 챗봇 기능(블록 클릭 질문, 모델 선택, 이미지, 책 수정·되돌리기, Esc 중지)과 보안 주의는 루트의 `README.md`를, 원고 형식은 루트의 `FORMAT.md`를 보세요.
 

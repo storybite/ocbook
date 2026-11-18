@@ -17,21 +17,30 @@ oc2/                      ← 이 저장소
 ```
 새 책은 `book/` 옆에 폴더 하나(예: `book2/`)로 두거나, 다른 곳에 두고 같은 엔진으로 띄울 수 있습니다.
 
-## 설치
+## 실행
+명령은 **저장소 루트에서** 책 폴더를 인자로 줍니다. 그러면 따로 설치하지 않아도 이 저장소의 엔진(`bookbot/`)을 씁니다.
 ```bash
-pip install -e D:\workspace\cc\book\oc2       # 한 번만(저장소 루트). 엔진을 고치면 모든 책에 바로 반영된다
+pip install fastapi uvicorn claude-agent-sdk python-dotenv pydantic anyio   # 의존 패키지 (한 번만)
+python -m bookbot build book      # 원고 → opencode-v2.html → 챗봇 색인(book/.bookbot/corpus)
+python -m bookbot serve book      # http://127.0.0.1:8771/
 ```
 - 모델은 Claude Agent SDK로 부르며, SDK가 띄우는 `claude` CLI의 로그인(**Claude Code 구독**)을 씁니다. 미리 `claude`에서 `/login` 해 두세요.
 - Codex 모델도 쓰려면 Codex CLI를 설치하고 로그인해 두세요(ChatGPT 로그인). 없으면 Claude 모델만 나옵니다.
 - `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`이 환경에 있으면 API 과금으로 넘어가므로, 서버가 시작할 때 무시합니다.
+- `pip install -e .`로 엔진을 설치하면 어느 폴더에서나 `python -m bookbot`을 쓸 수 있습니다. 다만 설치는 PC에 하나뿐이라, 이 저장소를 복사해 책을 여러 권 두면 설치한 쪽 엔진이 불립니다. 루트에서 실행하면 늘 그 저장소의 엔진을 씁니다.
 
 ## 새 책 만들기
+이 저장소를 복사해 `book/`만 새 책으로 채웁니다.
+1. `book/directions.md`의 **1부(책의 방향성)**를 새 책 것으로 바꿉니다.
+2. 그 파일을 프롬프트로 주어 책을 만들게 합니다.
+
+복사한 뒤 무엇을 지우고 무엇을 남기는지, `book.toml` 작성법, 디자인 관례는 `directions.md`의 2부(제작 규칙)에 있습니다.
+
+책을 저장소 밖 다른 곳에 따로 둘 때는 뼈대를 만드는 명령을 씁니다.
 ```bash
 python -m bookbot new D:\books\mybook --id mybook --title "내 책" --subtitle "부제" --port 8772
-# book.toml 의 [prompt] intro·topics 를 채우고, src/chNN.html 로 장을 쓴다 (FORMAT.md)
-cd D:\books\mybook
-python -m bookbot build        # 원고 → mybook.html → 챗봇 색인(.bookbot/corpus)
-python -m bookbot serve        # http://127.0.0.1:8772/
+python -m bookbot build D:\books\mybook
+python -m bookbot serve D:\books\mybook
 ```
 - 원고를 손으로 고쳤으면 `build`를 다시 돌리세요. 색인이 책보다 오래되면 서버가 시작할 때 경고합니다.
 - 채팅으로 고친 것은 서버가 알아서 다시 빌드합니다.
