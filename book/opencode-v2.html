@@ -5667,7 +5667,7 @@ $env:EDITOR = "code --wait"</code></pre>
   if(document.readyState==='complete') show(location.hash);
 })();
 </script>
-<!-- 책 Q&A 챗봇: build.py 가 </body> 앞에 넣는다. 형식은 ii1/book 『그래프RAG 실무』의 책 챗봇을 따른다 -->
+<!-- 책 Q&A 챗봇 (bookbot 엔진): bookbot/build.py 가 </body> 앞에 넣는다. BOOK_ID 는 빌드 때 book.toml 의 id 로 채운다 -->
 <style>
 :root{--danger:#a32020; --danger-bg:#fbeaea}
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){--danger:#f08080; --danger-bg:#3a1f1f} }
@@ -6028,7 +6028,7 @@ $env:EDITOR = "code --wait"</code></pre>
 })();
 </script>
 <script>
-// 책에 묻기 — 본문 블록 클릭 → 챗 팝업. 서버: book/server.py (POST /api/chat/stream)
+// 책에 묻기 — 본문 블록 클릭 → 챗 팝업. 서버: python -m bookbot serve (POST /api/chat/stream)
 (function(){
   var content = document.getElementById('content');
   if (!content) return;
@@ -6552,7 +6552,7 @@ $env:EDITOR = "code --wait"</code></pre>
         (asEdit ? '<span class="ch-tag" title="책 수정 모드에서 보낸 요청">✏️ 수정</span>' : '') + esc(q));
     input.value = '';
     if (location.protocol === 'file:') {
-      add('ch-msg err', '챗봇은 서버에서 열어야 동작합니다. <code>python book/server.py</code> 실행 후 <code>http://127.0.0.1:8771/</code>로 접속하세요.');
+      add('ch-msg err', '챗봇은 서버에서 열어야 동작합니다. 책 폴더에서 <code>python -m bookbot serve</code> 실행 후 <code>http://127.0.0.1:&lt;book.toml 의 port&gt;/</code>로 접속하세요.');
       return;
     }
     state.busy = true; sendBtn.disabled = true;
